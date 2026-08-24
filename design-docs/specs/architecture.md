@@ -6,7 +6,7 @@ Draft
 
 ## Overview
 
-`document-gateway` is a Swift Package Manager project with a
+`google-documents-gateway` is a Swift Package Manager project with a
 library target, an executable target, tests, and release automation for Homebrew.
 
 ## Targets

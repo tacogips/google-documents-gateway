@@ -2,7 +2,7 @@
 
 This project ships two Homebrew release paths:
 
-- Formula: unsigned tarballs containing `bin/document-gateway` and all six
+- Formula: unsigned tarballs containing `bin/google-documents-gateway` and all six
   role-separated Google gateway executables.
 - Cask: signed, notarized, and stapled macOS DMGs containing the command line tool.
 
@@ -20,17 +20,17 @@ scripts/build-homebrew-release.sh darwin-arm64 darwin-x64
 The command writes archives and checksums under `dist/homebrew/`:
 
 ```text
-dist/homebrew/document-gateway-<version>-darwin-arm64.tar.gz
-dist/homebrew/document-gateway-<version>-darwin-arm64.tar.gz.sha256
-dist/homebrew/document-gateway-<version>-darwin-x64.tar.gz
-dist/homebrew/document-gateway-<version>-darwin-x64.tar.gz.sha256
+dist/homebrew/google-documents-gateway-<version>-darwin-arm64.tar.gz
+dist/homebrew/google-documents-gateway-<version>-darwin-arm64.tar.gz.sha256
+dist/homebrew/google-documents-gateway-<version>-darwin-x64.tar.gz
+dist/homebrew/google-documents-gateway-<version>-darwin-x64.tar.gz.sha256
 ```
 
 Publish those assets to the GitHub release named `v<version>`, then render the
 formula into a tap checkout:
 
 ```bash
-scripts/render-homebrew-formula.sh <version> ../homebrew-tap/Formula/document-gateway.rb
+scripts/render-homebrew-formula.sh <version> ../homebrew-tap/Formula/google-documents-gateway.rb
 ```
 
 ## Cask
@@ -45,16 +45,16 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 This writes:
 
 ```text
-dist/homebrew-cask/document-gateway-<version>-darwin-arm64.dmg
-dist/homebrew-cask/document-gateway-<version>-darwin-arm64.dmg.sha256
-dist/homebrew-cask/document-gateway-<version>-darwin-x64.dmg
-dist/homebrew-cask/document-gateway-<version>-darwin-x64.dmg.sha256
+dist/homebrew-cask/google-documents-gateway-<version>-darwin-arm64.dmg
+dist/homebrew-cask/google-documents-gateway-<version>-darwin-arm64.dmg.sha256
+dist/homebrew-cask/google-documents-gateway-<version>-darwin-x64.dmg
+dist/homebrew-cask/google-documents-gateway-<version>-darwin-x64.dmg.sha256
 ```
 
 Render the Cask:
 
 ```bash
-scripts/render-homebrew-cask.sh <version> ../homebrew-tap/Casks/document-gateway.rb
+scripts/render-homebrew-cask.sh <version> ../homebrew-tap/Casks/google-documents-gateway.rb
 ```
 
 For a tagged release, the local wrapper verifies the tag, builds DMGs, uploads
@@ -70,10 +70,10 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 From the tap checkout:
 
 ```bash
-ruby -c Formula/document-gateway.rb
-brew audit --strict document-gateway || brew audit --strict --formula document-gateway
-brew fetch --cask user/tap/document-gateway
-HOMEBREW_NO_GITHUB_API=1 brew audit --cask user/tap/document-gateway
+ruby -c Formula/google-documents-gateway.rb
+brew audit --strict google-documents-gateway || brew audit --strict --formula google-documents-gateway
+brew fetch --cask user/tap/google-documents-gateway
+HOMEBREW_NO_GITHUB_API=1 brew audit --cask user/tap/google-documents-gateway
 ```
 
 If online audit fails due local GitHub credentials or rate limits, run the

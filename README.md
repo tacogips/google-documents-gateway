@@ -1,4 +1,4 @@
-# document-gateway
+# google-documents-gateway
 
 A Swift command line tool
 
@@ -36,23 +36,23 @@ flow and stores a separate token with exactly one API scope.
 
 The kinko keys are:
 
-- `DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON`
-- `DOCUMENT_GATEWAY_CREDENTIAL_DOCS_WRITER_OAUTH_CLIENT_SECRET_JSON`
-- `DOCUMENT_GATEWAY_CREDENTIAL_SHEETS_READER_OAUTH_CLIENT_SECRET_JSON`
-- `DOCUMENT_GATEWAY_CREDENTIAL_SHEETS_WRITER_OAUTH_CLIENT_SECRET_JSON`
-- `DOCUMENT_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON`
-- `DOCUMENT_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_WRITER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_READER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_WRITER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_SECRET_JSON`
 
 After login, the matching token can also be supplied without a filesystem
-credential through `DOCUMENT_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_JSON`, for
-example `DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_JSON`. Environment
-JSON takes precedence over `DOCUMENT_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH`,
+credential through `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_JSON`, for
+example `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_JSON`. Environment
+JSON takes precedence over `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH`,
 matching `mail-gateway`. An expired environment token is refreshed in memory;
 the caller remains responsible for replacing its kinko value.
 
 The reusable Desktop OAuth client JSON from the sibling `mail-gateway` vault
-has been copied into these document-gateway-local keys. Gmail token values were
-not copied because Gmail grants do not satisfy any document-gateway role.
+has been copied into these google-documents-gateway-local keys. Gmail token values were
+not copied because Gmail grants do not satisfy any google-documents-gateway role.
 
 Run each login through kinko. Login opens the browser, acquires the Google OAuth
 token through PKCE, and accepts the callback only on a temporary `127.0.0.1`
@@ -62,23 +62,23 @@ arguments. To open the URL manually in a browser on the same Mac, add
 error while the loopback callback listener waits for completion.
 
 ```bash
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON -- \
   swift run google-docs-gateway-reader auth login
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_DOCS_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
   swift run google-docs-gateway-writer auth login
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_SHEETS_READER_OAUTH_CLIENT_SECRET_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_READER_OAUTH_CLIENT_SECRET_JSON -- \
   swift run google-sheet-gateway-reader auth login
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_SHEETS_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
   swift run google-sheet-gateway-writer auth login
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON -- \
   swift run google-drive-gateway-reader auth login
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
   swift run google-drive-gateway-writer auth login
 ```
 
-Tokens default to `~/.config/document-gateway/tokens/<role>.json` and are
+Tokens default to `~/.config/google-documents-gateway/tokens/<role>.json` and are
 written atomically with mode `0600`. Override a path with the matching
-`DOCUMENT_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH` variable. `doctor`,
+`GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH` variable. `doctor`,
 `auth status`, and `auth revoke --confirm-credential <role>` never print token
 or client-secret values.
 
@@ -154,14 +154,14 @@ For a direct option value that begins with `--`, use the unambiguous
 mise install
 mise run build
 mise run test
-swift run document-gateway --help
+swift run google-documents-gateway --help
 ```
 
 The package uses Swift Package Manager with:
 
 - Library target: `AppCore`
 - Executable target: `AppCLI`
-- Installed executable: `document-gateway`
+- Installed executable: `google-documents-gateway`
 
 Swift target names and type names must be valid Swift identifiers. If the project
 name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
@@ -192,7 +192,7 @@ Install from the tap after the formula is published:
 
 ```bash
 brew tap tacogips/tap
-brew install document-gateway
+brew install google-documents-gateway
 ```
 
 ## Homebrew Cask

@@ -48,11 +48,11 @@ public enum GatewayCredentialProfileLoader {
     let id = credentialID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? credentialID! : role.identifier
     try GatewayCredentialProfile.validateID(id)
     let suffix = id.uppercased().map { $0.isLetter || $0.isNumber ? String($0) : "_" }.joined()
-    let pathKey = "DOCUMENT_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_PATH"
-    let clientKey = "DOCUMENT_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_ID"
-    let secretJSONKey = "DOCUMENT_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_JSON"
-    let secretPathKey = "DOCUMENT_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_PATH"
-    let tokenJSONKey = "DOCUMENT_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_JSON"
+    let pathKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_PATH"
+    let clientKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_ID"
+    let secretJSONKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_JSON"
+    let secretPathKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_PATH"
+    let tokenJSONKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_JSON"
     let tokenPath = environment[pathKey] ?? defaultTokenStoreURL(id: id).path
     let installedClient = try loadInstalledClient(json: environment[secretJSONKey], path: environment[secretPathKey])
     guard let clientID = installedClient?.clientID ?? environment[clientKey], !clientID.isEmpty else {
@@ -94,7 +94,7 @@ public enum GatewayCredentialProfileLoader {
 
   private static func defaultTokenStoreURL(id: String) -> URL {
     let root = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config").path
-    return URL(fileURLWithPath: root).appendingPathComponent("document-gateway/tokens/\(id).json")
+    return URL(fileURLWithPath: root).appendingPathComponent("google-documents-gateway/tokens/\(id).json")
   }
 }
 

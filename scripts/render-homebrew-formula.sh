@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-artifact_name="document-gateway"
-product="document-gateway"
+artifact_name="google-documents-gateway"
+product="google-documents-gateway"
 
 usage() {
   cat <<EOF
@@ -56,7 +56,7 @@ main() {
   version="$1"
   output="${2:-$repo_root/Formula/$artifact_name.rb}"
   release_dir="${RELEASE_DIR:-$repo_root/dist/homebrew}"
-  release_base_url="${RELEASE_BASE_URL:-https://github.com/tacogips/document-gateway/releases/download/v$version}"
+  release_base_url="${RELEASE_BASE_URL:-https://github.com/tacogips/google-documents-gateway/releases/download/v$version}"
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -64,9 +64,9 @@ main() {
 
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
-class DocumentGateway < Formula
+class GoogleDocumentsGateway < Formula
   desc "Least-privilege Google Docs, Sheets, and Drive CLI gateways"
-  homepage "https://github.com/tacogips/document-gateway"
+  homepage "https://github.com/tacogips/google-documents-gateway"
   license "MIT"
 
   livecheck do

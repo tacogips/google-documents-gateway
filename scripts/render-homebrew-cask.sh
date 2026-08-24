@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-artifact_name="document-gateway"
-product="document-gateway"
+artifact_name="google-documents-gateway"
+product="google-documents-gateway"
 
 usage() {
   cat <<EOF
@@ -63,7 +63,7 @@ main() {
 
   mkdir -p "$(dirname "$output")"
   cat > "$output" <<EOF
-cask "document-gateway" do
+cask "google-documents-gateway" do
   version "$version"
   arch arm: "darwin-arm64", intel: "darwin-x64"
 
@@ -72,7 +72,7 @@ cask "document-gateway" do
 
   url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg",
       verified: "github.com/user/repo/releases/download/"
-  name "document-gateway"
+  name "google-documents-gateway"
   desc "A Swift command line tool"
   homepage "https://github.com/user/repo"
 

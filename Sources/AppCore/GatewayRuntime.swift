@@ -123,7 +123,7 @@ public struct EnvironmentGrantAuthorizer: GatewayAuthorizing {
   }
 
   public func accessToken(for role: GatewayRole) throws -> String {
-    guard let token = environment["DOCUMENT_GATEWAY_ACCESS_TOKEN"], !token.isEmpty else {
+    guard let token = environment["GOOGLE_DOCUMENTS_GATEWAY_ACCESS_TOKEN"], !token.isEmpty else {
       throw GatewayError.authenticationRequired
     }
     guard let url = URL(string: "https://oauth2.googleapis.com/tokeninfo") else { throw GatewayError.authenticationRequired }

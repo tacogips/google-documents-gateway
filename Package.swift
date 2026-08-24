@@ -3,13 +3,13 @@
 import PackageDescription
 
 let package = Package(
-  name: "document-gateway",
+  name: "google-documents-gateway",
   platforms: [
     .macOS(.v14)
   ],
   products: [
     .library(name: "AppCore", targets: ["AppCore"]),
-    .executable(name: "document-gateway", targets: ["AppCLI"]),
+    .executable(name: "google-documents-gateway", targets: ["AppCLI"]),
     .executable(name: "google-docs-gateway-reader", targets: ["GoogleDocsGatewayReader"]),
     .executable(name: "google-docs-gateway-writer", targets: ["GoogleDocsGatewayWriter"]),
     .executable(name: "google-sheet-gateway-reader", targets: ["GoogleSheetGatewayReader"]),

@@ -73,7 +73,7 @@ private struct LoopbackResult: Sendable {
 }
 
 private final class LoopbackCallback: @unchecked Sendable {
-  private let queue = DispatchQueue(label: "document-gateway.oauth-loopback")
+  private let queue = DispatchQueue(label: "google-documents-gateway.oauth-loopback")
   private let ready = DispatchSemaphore(value: 0)
   private let completed = DispatchSemaphore(value: 0)
   private let lock = NSLock()

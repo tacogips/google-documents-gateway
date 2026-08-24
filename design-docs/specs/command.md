@@ -7,7 +7,7 @@ Draft
 ## Current CLI
 
 ```bash
-document-gateway [--help] [--version]
+google-documents-gateway [--help] [--version]
 ```
 
 ## Role-separated Google gateways

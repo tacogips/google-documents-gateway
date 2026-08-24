@@ -9,7 +9,7 @@ Use this skill for Formula releases installed with:
 
 ```bash
 brew tap user/tap
-brew install document-gateway
+brew install google-documents-gateway
 ```
 
 Use `.agents/skills/macos-cask-release/SKILL.md` for signed and notarized Cask
@@ -28,8 +28,8 @@ The default Swift formula contract is macOS-only:
 
 | Homebrew platform | Release asset |
 | --- | --- |
-| macOS Apple Silicon | `document-gateway-<version>-darwin-arm64.tar.gz` |
-| macOS Intel | `document-gateway-<version>-darwin-x64.tar.gz` |
+| macOS Apple Silicon | `google-documents-gateway-<version>-darwin-arm64.tar.gz` |
+| macOS Intel | `google-documents-gateway-<version>-darwin-x64.tar.gz` |
 
 Do not add Linux assets unless the project has a reviewed Swift Linux runtime
 contract.
@@ -62,7 +62,7 @@ For a custom tap path:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-scripts/render-homebrew-formula.sh "$version" /path/to/homebrew-tap/Formula/document-gateway.rb
+scripts/render-homebrew-formula.sh "$version" /path/to/homebrew-tap/Formula/google-documents-gateway.rb
 ```
 
 ## Publishing Notes
@@ -80,8 +80,8 @@ If publishing is explicitly requested:
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
 gh release upload "v${version}" \
-  "dist/homebrew/document-gateway-${version}-darwin-arm64.tar.gz" \
-  "dist/homebrew/document-gateway-${version}-darwin-x64.tar.gz" \
+  "dist/homebrew/google-documents-gateway-${version}-darwin-arm64.tar.gz" \
+  "dist/homebrew/google-documents-gateway-${version}-darwin-x64.tar.gz" \
   --repo user/repo \
   --clobber
 ```
@@ -91,11 +91,11 @@ gh release upload "v${version}" \
 From the tap checkout:
 
 ```bash
-ruby -c Formula/document-gateway.rb
-brew audit --strict document-gateway || brew audit --strict --formula document-gateway
-brew install user/tap/document-gateway
-document-gateway --version
-brew test user/tap/document-gateway
+ruby -c Formula/google-documents-gateway.rb
+brew audit --strict google-documents-gateway || brew audit --strict --formula google-documents-gateway
+brew install user/tap/google-documents-gateway
+google-documents-gateway --version
+brew test user/tap/google-documents-gateway
 ```
 
 If online audit fails because of local GitHub credentials or rate limits, run a
@@ -106,7 +106,7 @@ non-online audit and report the limitation.
 After pushing the tap Formula, require the tap's `update-api-metadata.yml`
 workflow to succeed for that commit. Derive the GitHub tap repository from
 `user/tap`, wait for the matching workflow run, then
-verify `api/formula/document-gateway.json` from
+verify `api/formula/google-documents-gateway.json` from
 GitHub Raw. The JSON release is incomplete unless `.versions.stable` equals the
 release version and `.ruby_source_checksum.sha256` equals the SHA-256 of the
 committed Formula Ruby file.

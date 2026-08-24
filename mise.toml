@@ -33,7 +33,7 @@ run = "swift build"
 
 [tasks.run]
 description = "Run the executable"
-run = "swift run document-gateway"
+run = "swift run google-documents-gateway"
 
 [tasks."gateway:help"]
 description = "Build and print help for every role-separated Google gateway"
@@ -73,7 +73,7 @@ if [ "$#" -eq 0 ]; then
   echo "usage: mise run homebrew:tap-formula -- <version>" >&2
   exit 2
 fi
-scripts/render-homebrew-formula.sh "$1" "../homebrew-tap/Formula/document-gateway.rb"
+scripts/render-homebrew-formula.sh "$1" "../homebrew-tap/Formula/google-documents-gateway.rb"
 '''
 
 [tasks."build:homebrew-cask"]
@@ -91,7 +91,7 @@ if [ "$#" -eq 0 ]; then
   echo "usage: mise run homebrew:tap-cask -- <version>" >&2
   exit 2
 fi
-scripts/render-homebrew-cask.sh "$1" "../homebrew-tap/Casks/document-gateway.rb"
+scripts/render-homebrew-cask.sh "$1" "../homebrew-tap/Casks/google-documents-gateway.rb"
 '''
 
 [tasks."release:homebrew-cask-local"]

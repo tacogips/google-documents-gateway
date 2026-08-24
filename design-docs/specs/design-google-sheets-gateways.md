@@ -31,7 +31,7 @@ This makes a binary's authority visible, testable, and fail-closed.
 
 ## 2. Context and References
 
-The implementation is part of the six-binary `document-gateway` suite and uses
+The implementation is part of the six-binary `google-documents-gateway` suite and uses
 the same shared authentication, transport, structured-output, and error
 foundations as the Docs and Drive features.
 
@@ -112,8 +112,8 @@ ranges are always explicit; the gateway does not infer them from a current
 directory or prior invocation.
 
 Every command accepts global `--config <path>` and `--pretty` options. Config
-resolution is explicit `--config`, then `DOCUMENT_GATEWAY_CONFIG`, then
-`$XDG_CONFIG_HOME/document-gateway/config.toml` (falling back to the platform
+resolution is explicit `--config`, then `GOOGLE_DOCUMENTS_GATEWAY_CONFIG`, then
+`$XDG_CONFIG_HOME/google-documents-gateway/config.toml` (falling back to the platform
 config directory when `XDG_CONFIG_HOME` is unset). Pretty mode changes only JSON
 whitespace.
 
@@ -313,16 +313,16 @@ redacted result.
 
 The feature extends the issue-wide package architecture:
 
-- `DocumentGatewayCore`: shared configuration, OAuth, token persistence,
+- `GoogleDocumentsGatewayCore`: shared configuration, OAuth, token persistence,
   redaction, HTTP transport, request/response envelope, errors, clocks, and file
   access abstractions.
-- `DocumentGatewayCore/Sheets`: role-specific commands, Sheets request builder,
+- `GoogleDocumentsGatewayCore/Sheets`: role-specific commands, Sheets request builder,
   API DTOs, and application services.
 - `GoogleSheetGatewayReader`: minimal executable entry point selecting `.sheets`
   and `.read`.
 - `GoogleSheetGatewayWriter`: minimal executable entry point selecting `.sheets`
   and `.write`.
-- `DocumentGatewayCoreTests`: shared and Sheets-specific unit/protocol tests.
+- `GoogleDocumentsGatewayCoreTests`: shared and Sheets-specific unit/protocol tests.
 
 The two executables depend on the same core target but receive different
 `GatewayRole` values at construction. Role is immutable and `Sendable`.

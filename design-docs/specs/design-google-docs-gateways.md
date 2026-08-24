@@ -179,7 +179,7 @@ follow nearby repository conventions while retaining these responsibilities:
 
 ```text
 Sources/
-  DocumentGatewayCore/
+  GoogleDocumentsGatewayCore/
     Docs/DocsCommands.swift
     Docs/DocsAPIModels.swift
     Docs/DocsRequestBuilder.swift
@@ -188,7 +188,7 @@ Sources/
   GoogleDocsGatewayReader/main.swift
   GoogleDocsGatewayWriter/main.swift
 Tests/
-  DocumentGatewayCoreTests/
+  GoogleDocumentsGatewayCoreTests/
     DocsCommandBoundaryTests.swift
     DocsRequestBuilderTests.swift
     DocsAPIModelTests.swift
@@ -282,8 +282,8 @@ validation and never mutates a document.
 
 ### Configuration
 
-Default configuration is `$XDG_CONFIG_HOME/document-gateway/config.toml`, with
-`--config` and `DOCUMENT_GATEWAY_CONFIG` overrides:
+Default configuration is `$XDG_CONFIG_HOME/google-documents-gateway/config.toml`, with
+`--config` and `GOOGLE_DOCUMENTS_GATEWAY_CONFIG` overrides:
 
 ```toml
 [[credentials]]
@@ -304,10 +304,10 @@ token_store_path = "/private/path/tokens/docs-writer.json"
 Following the sibling convention, these values may be overridden by:
 
 ```text
-DOCUMENT_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_OAUTH_CLIENT_SECRET_PATH
-DOCUMENT_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_OAUTH_CLIENT_SECRET_JSON
-DOCUMENT_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_TOKEN_STORE_PATH
-DOCUMENT_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_TOKEN_STORE_JSON
+GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_OAUTH_CLIENT_SECRET_PATH
+GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_OAUTH_CLIENT_SECRET_JSON
+GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_TOKEN_STORE_PATH
+GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_TOKEN_STORE_JSON
 ```
 
 Environment values take precedence over TOML. Documentation names variables but

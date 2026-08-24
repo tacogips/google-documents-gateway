@@ -16,7 +16,7 @@ You (the LLM model) must include a paraphrase or summary of the user's instructi
 
 ## Project Overview
 
-This is `document-gateway`, a Swift Package Manager project with mise-managed tools and tasks, Homebrew formula packaging, and optional signed Homebrew Cask packaging.
+This is `google-documents-gateway`, a Swift Package Manager project with mise-managed tools and tasks, Homebrew formula packaging, and optional signed Homebrew Cask packaging.
 
 ## Development Environment
 
@@ -32,7 +32,7 @@ This is `document-gateway`, a Swift Package Manager project with mise-managed to
 mise run build
 mise run test
 mise run lint
-swift run document-gateway --help
+swift run google-documents-gateway --help
 ```
 
 ## Swift Code Development

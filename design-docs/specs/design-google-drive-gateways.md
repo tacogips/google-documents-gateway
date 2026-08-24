@@ -118,14 +118,14 @@ protocol. This compile-time split supplements runtime scope validation.
 
 ### Credential setup and secret handling
 
-Configuration defaults to `$XDG_CONFIG_HOME/document-gateway/config.toml`
-with `--config` and `DOCUMENT_GATEWAY_CONFIG` overrides. Credential-specific
+Configuration defaults to `$XDG_CONFIG_HOME/google-documents-gateway/config.toml`
+with `--config` and `GOOGLE_DOCUMENTS_GATEWAY_CONFIG` overrides. Credential-specific
 environment names follow the mail-gateway normalization convention:
 
-- `DOCUMENT_GATEWAY_CREDENTIAL_<ID>_OAUTH_CLIENT_SECRET_PATH`
-- `DOCUMENT_GATEWAY_CREDENTIAL_<ID>_OAUTH_CLIENT_SECRET_JSON`
-- `DOCUMENT_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_PATH`
-- `DOCUMENT_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_OAUTH_CLIENT_SECRET_PATH`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_PATH`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_JSON`
 
 Environment JSON wins over environment path, which wins over the config path.
 Credential IDs that normalize to the same environment suffix are invalid.
@@ -140,7 +140,7 @@ Safe kinko usage passes named environment variables to the process, for
 example:
 
 ```bash
-kinko exec --env DOCUMENT_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON,DOCUMENT_GATEWAY_CREDENTIAL_DRIVE_READER_TOKEN_STORE_JSON -- \
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON,GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_READER_TOKEN_STORE_JSON -- \
   swift run google-drive-gateway-reader doctor --credential drive-reader
 ```
 

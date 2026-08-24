@@ -12,9 +12,9 @@ import Testing
 @Test func docsCredentialLoaderReadsKinkoDesktopClientJSON() throws {
   let role = GatewayRole(service: .docs, accessMode: .read)
   let environment = [
-    "DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON":
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON":
       "{\"installed\":{\"client_id\":\"desktop-client\",\"client_secret\":\"synthetic-secret\"}}",
-    "DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_PATH": "/tmp/document-gateway-docs-reader.json"
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_PATH": "/tmp/google-documents-gateway-docs-reader.json"
   ]
   let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
   #expect(profile.id == "docs-reader")
@@ -32,8 +32,8 @@ import Testing
   )
   let tokenJSON = String(data: try JSONEncoder().encode(tokenStore), encoding: .utf8) ?? ""
   let environment = [
-    "DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
-    "DOCUMENT_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_JSON": tokenJSON
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_JSON": tokenJSON
   ]
   let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
   #expect(profile.tokenStoreJSON == tokenJSON)

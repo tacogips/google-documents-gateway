@@ -8,7 +8,7 @@ import Testing
 
 @Test func commandReportsUsage() throws {
   let command = AppCommand(arguments: ["--help"])
-  #expect(try command.run().contains("Usage: document-gateway"))
+  #expect(try command.run().contains("Usage: google-documents-gateway"))
 }
 
 @Test func commandRejectsUnknownFlags() throws {

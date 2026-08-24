@@ -3,10 +3,10 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-product="document-gateway"
-artifact_name="document-gateway"
+product="google-documents-gateway"
+artifact_name="google-documents-gateway"
 products=(
-  "document-gateway"
+  "google-documents-gateway"
   "google-docs-gateway-reader"
   "google-docs-gateway-writer"
   "google-sheet-gateway-reader"

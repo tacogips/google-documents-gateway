@@ -24,12 +24,12 @@ public struct AppCommand: Sendable {
       throw Error.unknownArgument(firstUnknown)
     }
 
-    return "Hello from document-gateway"
+    return "Hello from google-documents-gateway"
   }
 
   public var usage: String {
     """
-    Usage: document-gateway [--help] [--version]
+    Usage: google-documents-gateway [--help] [--version]
     """
   }
 }
