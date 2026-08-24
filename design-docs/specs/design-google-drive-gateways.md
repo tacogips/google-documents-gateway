@@ -214,6 +214,10 @@ files rename --file-id ID --name NAME --expected-modified-time RFC3339
              --confirm-file-id ID
 files move --file-id ID --from-parent-id ID --to-parent-id ID
            --expected-modified-time RFC3339 --confirm-file-id ID
+files trash --file-id ID --expected-modified-time RFC3339 --confirm-file-id ID
+files untrash --file-id ID --expected-modified-time RFC3339 --confirm-file-id ID
+files delete --file-id ID --expected-modified-time RFC3339 --confirm-file-id ID
+             --acknowledge-permanent-delete
 permissions create --file-id ID --type user|group|domain|anyone
                    --role reader|commenter|writer
                    [--email ADDRESS] [--domain DOMAIN]
@@ -237,7 +241,8 @@ budget. The resumable session URI is treated as a secret and never logged.
 
 Existing-resource mutations require exact resource IDs, exact confirmation
 echoes, and the caller's previously observed `modifiedTime`. A preflight get
-must match that timestamp. Rename changes only `name`. Replace-content changes
+must match that timestamp. Permanent deletion bypasses the trash and
+additionally requires `--acknowledge-permanent-delete`. Rename changes only `name`. Replace-content changes
 only media and `mimeType`. Move also requires `from-parent-id` to be present and
 sends only `addParents` and `removeParents`; any mismatch returns
 `PRECONDITION_FAILED`. These preflights reduce stale-state accidents but are not

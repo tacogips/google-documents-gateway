@@ -322,13 +322,15 @@ public enum GatewayRequestBuilder {
       return try driveFilePlan(operation: operation, method: "PATCH", suffix: "", options: options, query: query)
     case "files trash", "files untrash":
       return try driveFilePlan(operation: operation, method: "PATCH", suffix: "", options: options)
+    case "files delete":
+      return try driveFilePlan(operation: operation, method: "DELETE", suffix: "", options: options)
     case "permissions create":
-      return try drivePermissionPlan(
-        operation: operation,
-        method: "POST",
-        options: options,
-        query: [("sendNotificationEmail", "true"), ("supportsAllDrives", "true")]
-      )
+      // Google rejects sendNotificationEmail for domain/anyone grantees.
+      var query = [("supportsAllDrives", "true")]
+      if let type = value("type", options), ["user", "group"].contains(type) {
+        query.insert(("sendNotificationEmail", "true"), at: 0)
+      }
+      return try drivePermissionPlan(operation: operation, method: "POST", options: options, query: query)
     case "permissions update":
       return try drivePermissionPlan(operation: operation, method: "PATCH", includePermissionID: true, options: options)
     case "permissions delete":

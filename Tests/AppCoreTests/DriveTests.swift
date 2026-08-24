@@ -99,6 +99,83 @@ private final class UploadFixtureTransport: GatewayHTTPTransport, @unchecked Sen
   #expect(transport.calls == 1)
 }
 
+@Test func driveDeleteRequiresPermanentDeleteAcknowledgement() {
+  let runner = GatewayCommandRunner(
+    role: GatewayRole(service: .drive, accessMode: .write),
+    authorizer: TestAuthorizer(),
+    transport: StalePreflightTransport()
+  )
+  let result = runner.run(arguments: [
+    "files", "delete", "--file-id", "file", "--confirm-file-id", "file",
+    "--expected-modified-time", "expected"
+  ])
+  #expect(result.exitCode == 2)
+  #expect(result.stdout.contains("acknowledge-permanent-delete"))
+}
+
+@Test func driveDeletePreflightsThenSendsDelete() {
+  let transport = DeleteFixtureTransport()
+  let runner = GatewayCommandRunner(
+    role: GatewayRole(service: .drive, accessMode: .write),
+    authorizer: TestAuthorizer(),
+    transport: transport
+  )
+  let result = runner.run(arguments: [
+    "files", "delete", "--file-id", "file/id", "--confirm-file-id", "file/id",
+    "--expected-modified-time", "expected", "--acknowledge-permanent-delete"
+  ])
+  #expect(result.exitCode == 0)
+  #expect(transport.calls == 2)
+  #expect(transport.secondMethod == "DELETE")
+  #expect(transport.secondURL?.absoluteString.contains("/drive/v3/files/file%2Fid") == true)
+}
+
+@Test func driveReaderCannotPermanentlyDelete() {
+  let runner = GatewayCommandRunner(
+    role: GatewayRole(service: .drive, accessMode: .read),
+    authorizer: TestAuthorizer(),
+    transport: StalePreflightTransport()
+  )
+  let result = runner.run(arguments: [
+    "files", "delete", "--file-id", "file", "--confirm-file-id", "file",
+    "--expected-modified-time", "expected", "--acknowledge-permanent-delete"
+  ])
+  #expect(result.exitCode == 2)
+  #expect(result.stdout.contains("FORBIDDEN_COMMAND"))
+}
+
+@Test func drivePermissionCreateOnlyNotifiesUserAndGroupGrantees() throws {
+  let role = GatewayRole(service: .drive, accessMode: .write)
+  let anyone = try GatewayRequestBuilder.plan(
+    role: role,
+    operation: "permissions create",
+    options: ["file-id": ["file"], "type": ["anyone"], "role": ["reader"]]
+  )
+  #expect(!anyone.query.contains { $0.0 == "sendNotificationEmail" })
+  let user = try GatewayRequestBuilder.plan(
+    role: role,
+    operation: "permissions create",
+    options: ["file-id": ["file"], "type": ["user"], "role": ["reader"], "email": ["a@example.com"]]
+  )
+  #expect(user.query.contains { $0.0 == "sendNotificationEmail" && $0.1 == "true" })
+}
+
+private final class DeleteFixtureTransport: GatewayHTTPTransport, @unchecked Sendable {
+  private(set) var calls = 0
+  private(set) var secondMethod: String?
+  private(set) var secondURL: URL?
+
+  func send(url: URL, method: String, headers: [String: String], body: Data?) throws -> GatewayHTTPResponse {
+    calls += 1
+    if calls == 1 {
+      return GatewayHTTPResponse(statusCode: 200, data: Data("{\"modifiedTime\":\"expected\"}".utf8), requestID: "preflight")
+    }
+    secondMethod = method
+    secondURL = url
+    return GatewayHTTPResponse(statusCode: 204, data: Data(), requestID: "delete")
+  }
+}
+
 private struct UntrustedUploadTransport: GatewayHTTPTransport {
   func send(url: URL, method: String, headers: [String: String], body: Data?) throws -> GatewayHTTPResponse {
     GatewayHTTPResponse(statusCode: 200, data: Data(), requestID: "start", location: "https://evil.invalid/session")

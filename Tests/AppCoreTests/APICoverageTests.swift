@@ -118,7 +118,8 @@ import Testing
   #expect(writer.contains("comments create"))
   #expect(writer.contains("replies update"))
   #expect(writer.contains("revisions update"))
-  #expect(!writer.contains("files delete"))
+  #expect(writer.contains("files delete"))
+  #expect(!reader.contains("files delete"))
 }
 
 @Test func requestBuilderEnforcesRoleBoundaryWhenCalledDirectly() {

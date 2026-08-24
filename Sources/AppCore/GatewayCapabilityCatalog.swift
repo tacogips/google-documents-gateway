@@ -29,7 +29,7 @@ public enum GatewayCapabilityCatalog {
     case (.drive, .write):
       [
         "folders create", "files upload", "files copy", "files replace-content", "files rename", "files move",
-        "files trash", "files untrash", "permissions create", "permissions update", "permissions delete",
+        "files trash", "files untrash", "files delete", "permissions create", "permissions update", "permissions delete",
         "comments create", "comments update", "comments delete",
         "replies create", "replies update", "replies delete", "revisions update"
       ]

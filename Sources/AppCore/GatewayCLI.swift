@@ -48,7 +48,7 @@ public struct GatewayCommandRunner: Sendable {
       let token = try authorizer.accessToken(for: role)
       if role.service == .drive, [
         "files replace-content", "files rename", "files move", "files trash", "files untrash",
-        "permissions update", "permissions delete"
+        "files delete", "permissions update", "permissions delete"
       ].contains(command) {
         let preflight = try driveMutationPreflight(command: command, token: token, options: parsed.options)
         if let preflight { return preflight }
@@ -168,6 +168,9 @@ public struct GatewayCommandRunner: Sendable {
       ],
       "files trash": ["file-id", "confirm-file-id", "expected-modified-time", "dry-run"],
       "files untrash": ["file-id", "confirm-file-id", "expected-modified-time", "dry-run"],
+      "files delete": [
+        "file-id", "confirm-file-id", "expected-modified-time", "acknowledge-permanent-delete", "dry-run"
+      ],
       "permissions create": ["file-id", "type", "role", "email", "domain", "acknowledge-broad-access", "dry-run"],
       "permissions update": [
         "file-id", "permission-id", "confirm-permission-id", "expected-role", "role", "dry-run"
@@ -291,10 +294,13 @@ public struct GatewayCommandRunner: Sendable {
         throw GatewayError.invalidArgument("--max-pages must be between 1 and 100")
       }
     }
-    if ["files replace-content", "files rename", "files move", "files trash", "files untrash"].contains(command) {
+    if ["files replace-content", "files rename", "files move", "files trash", "files untrash", "files delete"].contains(command) {
       try require("expected-modified-time", options: options)
       let fileID = options["file-id"]?.last
       guard fileID == options["confirm-file-id"]?.last else { throw GatewayError.invalidArgument("--confirm-file-id must exactly match --file-id") }
+    }
+    if command == "files delete", options["acknowledge-permanent-delete"] == nil {
+      throw GatewayError.invalidArgument("Permanent deletion bypasses the trash and requires --acknowledge-permanent-delete")
     }
     if command == "files move", options["add-parents"] == nil, options["remove-parents"] == nil {
       throw GatewayError.invalidArgument("files move requires --add-parents or --remove-parents")
@@ -705,8 +711,8 @@ private struct ParsedArguments {
       let key = String(keyValue[0])
       guard !key.isEmpty else { throw GatewayError.invalidArgument("Expected option name") }
       if [
-        "dry-run", "overwrite", "page-all", "online", "acknowledge-broad-access", "confirm-clear",
-        "keep-forever", "publish"
+        "dry-run", "overwrite", "page-all", "online", "acknowledge-broad-access",
+        "acknowledge-permanent-delete", "confirm-clear", "keep-forever", "publish"
       ].contains(key) {
         guard keyValue.count == 1 else { throw GatewayError.invalidArgument("--\(key) does not take a value") }
         values[key, default: []].append("true")
