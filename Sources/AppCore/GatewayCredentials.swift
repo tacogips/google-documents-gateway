@@ -53,7 +53,7 @@ public enum GatewayCredentialProfileLoader {
     let secretJSONKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_JSON"
     let secretPathKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_PATH"
     let tokenJSONKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_JSON"
-    let tokenPath = environment[pathKey] ?? defaultTokenStoreURL(id: id).path
+    let tokenPath = environment[pathKey] ?? defaultTokenStoreURL(id: id, environment: environment).path
     let installedClient = try loadInstalledClient(json: environment[secretJSONKey], path: environment[secretPathKey])
     guard let clientID = installedClient?.clientID ?? environment[clientKey], !clientID.isEmpty else {
       throw GatewayError.authenticationRequired
@@ -92,9 +92,19 @@ public enum GatewayCredentialProfileLoader {
     return client
   }
 
-  private static func defaultTokenStoreURL(id: String) -> URL {
-    let root = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config").path
-    return URL(fileURLWithPath: root).appendingPathComponent("google-documents-gateway/tokens/\(id).json")
+  /// Tokens are auth state, not configuration: the default lives under
+  /// XDG_STATE_HOME (~/.local/state), never ~/.config. Precedence:
+  /// per-credential *_TOKEN_STORE_PATH (exact file) wins in load(role:) above,
+  /// then GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR relocates the directory,
+  /// then the XDG state default applies.
+  private static func defaultTokenStoreURL(id: String, environment: [String: String]) -> URL {
+    if let credentialDir = nonBlank(environment["GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR"]) {
+      return URL(fileURLWithPath: credentialDir).appendingPathComponent("\(id).json")
+    }
+    let stateRoot = nonBlank(environment["XDG_STATE_HOME"])
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state").path
+    return URL(fileURLWithPath: stateRoot)
+      .appendingPathComponent("google-documents-gateway/credentials/\(id).json")
   }
 }
 

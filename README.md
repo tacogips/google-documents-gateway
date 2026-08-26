@@ -76,9 +76,13 @@ kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_S
   swift run google-drive-gateway-writer auth login
 ```
 
-Tokens default to `~/.config/google-documents-gateway/tokens/<role>.json` and are
-written atomically with mode `0600`. Override a path with the matching
-`GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH` variable. `doctor`,
+Tokens default to
+`${XDG_STATE_HOME:-~/.local/state}/google-documents-gateway/credentials/<role>.json`
+(auth state, deliberately outside `~/.config`) and are written atomically with
+mode `0600`. Relocate the whole directory with
+`GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR`, or override one file with the
+matching `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH`
+variable (the per-file variable wins). `doctor`,
 `auth status`, and `auth revoke --confirm-credential <role>` never print token
 or client-secret values.
 

@@ -22,6 +22,54 @@ import Testing
   #expect(profile.clientSecret == "synthetic-secret")
 }
 
+@Test func docsCredentialLoaderDefaultsTokenStoreToXDGStateHome() throws {
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let environment = [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "XDG_STATE_HOME": "/tmp/xdg-state"
+  ]
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
+  #expect(
+    profile.tokenStoreURL.path
+      == "/tmp/xdg-state/google-documents-gateway/credentials/docs-reader.json"
+  )
+}
+
+@Test func docsCredentialLoaderDefaultsTokenStoreUnderLocalState() throws {
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let environment = [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client"
+  ]
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
+  let home = FileManager.default.homeDirectoryForCurrentUser.path
+  #expect(
+    profile.tokenStoreURL.path
+      == "\(home)/.local/state/google-documents-gateway/credentials/docs-reader.json"
+  )
+}
+
+@Test func docsCredentialLoaderHonorsCredentialDirOverPathDefaults() throws {
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let environment = [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR": "/tmp/riela-credentials",
+    "XDG_STATE_HOME": "/tmp/xdg-state"
+  ]
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
+  #expect(profile.tokenStoreURL.path == "/tmp/riela-credentials/docs-reader.json")
+}
+
+@Test func docsCredentialLoaderPrefersExactTokenStorePathOverCredentialDir() throws {
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let environment = [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR": "/tmp/riela-credentials",
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_PATH": "/tmp/exact.json"
+  ]
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
+  #expect(profile.tokenStoreURL.path == "/tmp/exact.json")
+}
+
 @Test func docsCredentialLoaderAndAuthorizerReadTokenStoreJSON() throws {
   let role = GatewayRole(service: .docs, accessMode: .read)
   let tokenStore = GatewayTokenStore(
