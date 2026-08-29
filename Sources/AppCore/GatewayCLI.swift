@@ -10,11 +10,25 @@ public struct GatewayCommandRunner: Sendable {
   public let authorizer: GatewayAuthorizing
   public let transport: GatewayHTTPTransport
   public let credentialProfile: GatewayCredentialProfile?
+  /// Where credential variables are read from. Defaults to the process
+  /// environment. A host that links this package as a library passes one
+  /// call's environment directly instead of writing credentials into its own
+  /// process environment, which is unsafe with concurrent calls.
+  public let environment: [String: String]
 
-  public init(role: GatewayRole, authorizer: GatewayAuthorizing? = nil, transport: GatewayHTTPTransport = URLSessionGatewayTransport(), credentialProfile: GatewayCredentialProfile? = nil) {
+  public init(
+    role: GatewayRole,
+    authorizer: GatewayAuthorizing? = nil,
+    transport: GatewayHTTPTransport = URLSessionGatewayTransport(),
+    credentialProfile: GatewayCredentialProfile? = nil,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) {
     self.role = role
     self.credentialProfile = credentialProfile
-    self.authorizer = authorizer ?? credentialProfile.map { PersistedTokenAuthorizer(profile: $0, transport: transport) } ?? GatewayCommandRunner.defaultAuthorizer(role: role)
+    self.environment = environment
+    self.authorizer = authorizer
+      ?? credentialProfile.map { PersistedTokenAuthorizer(profile: $0, transport: transport) }
+      ?? GatewayCommandRunner.defaultAuthorizer(role: role, environment: environment)
     self.transport = transport
   }
 
@@ -670,8 +684,11 @@ public struct GatewayCommandRunner: Sendable {
     ])
   }
 
-  private static func defaultAuthorizer(role: GatewayRole) -> GatewayAuthorizing {
-    if let profile = try? GatewayCredentialProfileLoader.load(role: role) {
+  private static func defaultAuthorizer(
+    role: GatewayRole,
+    environment: [String: String]
+  ) -> GatewayAuthorizing {
+    if let profile = try? GatewayCredentialProfileLoader.load(role: role, environment: environment) {
       return PersistedTokenAuthorizer(profile: profile)
     }
     return MissingCredentialAuthorizer()
@@ -682,7 +699,11 @@ public struct GatewayCommandRunner: Sendable {
       guard credentialProfile.id == credential, credentialProfile.role == role else { throw GatewayError.scopeMismatch }
       return credentialProfile
     }
-    return try GatewayCredentialProfileLoader.load(role: role, credentialID: credential)
+    return try GatewayCredentialProfileLoader.load(
+      role: role,
+      credentialID: credential,
+      environment: environment
+    )
   }
 
   private func tokenStore(profile: GatewayCredentialProfile) throws -> GatewayTokenStore {
