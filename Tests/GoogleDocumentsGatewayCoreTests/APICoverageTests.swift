@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func docsBatchUpdateAcceptsEveryDiscoveredRequestVariant() throws {
   for request in GatewayCapabilityCatalog.docsBatchUpdateRequests {

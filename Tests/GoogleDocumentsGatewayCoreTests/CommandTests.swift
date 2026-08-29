@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func commandReportsVersion() throws {
   let command = AppCommand(arguments: ["--version"])

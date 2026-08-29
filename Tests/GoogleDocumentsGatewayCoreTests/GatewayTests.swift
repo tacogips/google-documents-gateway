@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func rolesUseExactLeastPrivilegeScopes() {
   #expect(GatewayRole(service: .docs, accessMode: .read).scope == "https://www.googleapis.com/auth/documents.readonly")

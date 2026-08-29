@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func driveTokenStoresAreRoleBoundAndPrivate() throws {
   let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)

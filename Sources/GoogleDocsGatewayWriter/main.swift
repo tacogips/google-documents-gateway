@@ -1,5 +1,5 @@
 import Foundation
-import AppCore
+import GoogleDocumentsGatewayCore
 
 let result = GatewayCommandRunner(role: GatewayRole(service: .docs, accessMode: .write)).run(arguments: Array(CommandLine.arguments.dropFirst()))
 print(result.stdout)

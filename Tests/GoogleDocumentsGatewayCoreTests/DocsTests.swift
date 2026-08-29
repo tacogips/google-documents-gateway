@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func docsAuthorizationURLUsesExactScopeAndPKCE() throws {
   let profile = try GatewayCredentialProfile(id: "docs-reader", role: GatewayRole(service: .docs, accessMode: .read), clientID: "client", tokenStoreURL: URL(fileURLWithPath: "/tmp/docs-token.json"))

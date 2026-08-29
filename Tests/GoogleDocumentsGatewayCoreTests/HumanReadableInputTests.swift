@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func docsReadableSourcesGenerateEquivalentProviderBodies() throws {
   let generatedCreate = try #require(try GatewayInputValidator.body(

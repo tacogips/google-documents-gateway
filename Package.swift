@@ -8,8 +8,8 @@ let package = Package(
     .macOS(.v14)
   ],
   products: [
-    .library(name: "AppCore", targets: ["AppCore"]),
-    .executable(name: "google-documents-gateway", targets: ["AppCLI"]),
+    .library(name: "GoogleDocumentsGatewayCore", targets: ["GoogleDocumentsGatewayCore"]),
+    .executable(name: "google-documents-gateway", targets: ["GoogleDocumentsGatewayCLI"]),
     .executable(name: "google-docs-gateway-reader", targets: ["GoogleDocsGatewayReader"]),
     .executable(name: "google-docs-gateway-writer", targets: ["GoogleDocsGatewayWriter"]),
     .executable(name: "google-sheet-gateway-reader", targets: ["GoogleSheetGatewayReader"]),
@@ -18,20 +18,20 @@ let package = Package(
     .executable(name: "google-drive-gateway-writer", targets: ["GoogleDriveGatewayWriter"])
   ],
   targets: [
-    .target(name: "AppCore"),
+    .target(name: "GoogleDocumentsGatewayCore"),
     .executableTarget(
-      name: "AppCLI",
-      dependencies: ["AppCore"]
+      name: "GoogleDocumentsGatewayCLI",
+      dependencies: ["GoogleDocumentsGatewayCore"]
     ),
-    .executableTarget(name: "GoogleDocsGatewayReader", dependencies: ["AppCore"]),
-    .executableTarget(name: "GoogleDocsGatewayWriter", dependencies: ["AppCore"]),
-    .executableTarget(name: "GoogleSheetGatewayReader", dependencies: ["AppCore"]),
-    .executableTarget(name: "GoogleSheetGatewayWriter", dependencies: ["AppCore"]),
-    .executableTarget(name: "GoogleDriveGatewayReader", dependencies: ["AppCore"]),
-    .executableTarget(name: "GoogleDriveGatewayWriter", dependencies: ["AppCore"]),
+    .executableTarget(name: "GoogleDocsGatewayReader", dependencies: ["GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDocsGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleSheetGatewayReader", dependencies: ["GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleSheetGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDriveGatewayReader", dependencies: ["GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDriveGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
     .testTarget(
-      name: "AppCoreTests",
-      dependencies: ["AppCore"]
+      name: "GoogleDocumentsGatewayCoreTests",
+      dependencies: ["GoogleDocumentsGatewayCore"]
     )
   ],
   swiftLanguageModes: [.v6]

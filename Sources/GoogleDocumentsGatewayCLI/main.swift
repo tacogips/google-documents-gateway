@@ -1,5 +1,5 @@
 import Foundation
-import AppCore
+import GoogleDocumentsGatewayCore
 
 let command = AppCommand(arguments: Array(CommandLine.arguments.dropFirst()))
 

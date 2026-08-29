@@ -1,5 +1,5 @@
 import Testing
-@testable import AppCore
+@testable import GoogleDocumentsGatewayCore
 
 @Test func sheetsReaderAndWriterScopesAreNotInterchangeable() throws {
   let writer = GatewayTokenStore(role: GatewayRole(service: .sheets, accessMode: .write), accessToken: "redacted", refreshToken: nil, expiresAt: nil)

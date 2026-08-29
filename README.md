@@ -163,14 +163,16 @@ swift run google-documents-gateway --help
 
 The package uses Swift Package Manager with:
 
-- Library target: `AppCore`
-- Executable target: `AppCLI`
+- Library target: `GoogleDocumentsGatewayCore`
+- Executable target: `GoogleDocumentsGatewayCLI`
 - Installed executable: `google-documents-gateway`
 
 Swift target names and type names must be valid Swift identifiers. If the project
 name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
-needed, but use identifier-safe values such as `AppCore`, `AppCLI`, and
-`AppCommand` for Swift module/type variables.
+needed, but use identifier-safe values for Swift module/type variables. The
+module names are project-qualified rather than generic (`AppCore`, `AppCLI`)
+because a host that links several of these gateways as libraries needs every
+target name in the package graph to be unique.
 
 ## Homebrew Formula
 
