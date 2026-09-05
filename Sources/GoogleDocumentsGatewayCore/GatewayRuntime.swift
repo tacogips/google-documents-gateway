@@ -1,17 +1,104 @@
 @preconcurrency import Foundation
 
+final class GatewayProviderJSONDecoder: @unchecked Sendable {
+  static let live = GatewayProviderJSONDecoder()
+  private let decodeValue: (Data) -> Any?
+
+  init(decode: @escaping (Data) -> Any? = { try? JSONSerialization.jsonObject(with: $0) }) {
+    decodeValue = decode
+  }
+
+  func decode(_ data: Data) -> Any? { decodeValue(data) }
+}
+
+enum GatewayBoundedProviderJSON {
+  static func message(_ data: Data, cancellation: GatewaySDKCancellation?) throws -> String {
+    try checkCancellation(cancellation)
+    guard try structureIsBounded(data, cancellation: cancellation),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let error = object["error"] as? [String: Any],
+          let message = error["message"] as? String else { return "Google API request failed." }
+    try checkCancellation(cancellation)
+    return message
+  }
+
+  static func success(_ payload: [String: Any], cancellation: GatewaySDKCancellation?) throws -> GatewayCommandResult {
+    try checkCancellation(cancellation)
+    let outputData = (try? JSONSerialization.data(withJSONObject: ["ok": true, "data": payload], options: [.sortedKeys]))
+      ?? Data("{\"ok\":false}".utf8)
+    try checkCancellation(cancellation)
+    return .init(stdout: String(data: outputData, encoding: .utf8) ?? "{\"ok\":false}", exitCode: 0)
+  }
+
+  /// Bounds JSON structure before Foundation materializes an object graph. SDK transports already
+  /// bound response bytes; request bodies have an equivalent input limit. This caps
+  /// comma-delimited values and nesting to prevent a small-token wide array from amplifying.
+  static func structureIsBounded(
+    _ data: Data, cancellation: GatewaySDKCancellation?, progressObserver: @escaping @Sendable () -> Void = {}
+  ) throws -> Bool {
+    guard cancellation != nil else { return true }
+    var quoted = false
+    var escaped = false
+    var depth = 0
+    var values = 0
+    for (index, byte) in data.enumerated() {
+      if index & 0x0FFF == 0 {
+        progressObserver()
+        try checkCancellation(cancellation)
+      }
+      if quoted {
+        if escaped { escaped = false } else if byte == 0x5C { escaped = true } else if byte == 0x22 { quoted = false }
+        continue
+      }
+      switch byte {
+      case 0x22: quoted = true
+      case 0x5B, 0x7B:
+        depth += 1
+        values += 1
+      case 0x5D, 0x7D:
+        depth -= 1
+      case 0x2C:
+        values += 1
+      default:
+        continue
+      }
+      guard depth >= 0, depth <= 128, values <= 16 * 1024 else { return false }
+    }
+    try checkCancellation(cancellation)
+    return !quoted && depth == 0
+  }
+}
+
 public struct GatewayHTTPResponse: Sendable {
   public let statusCode: Int
   public let data: Data
   public let requestID: String?
   public let location: String?
+  public let range: String?
+  private let providerJSONDecoder: GatewayProviderJSONDecoder
 
-  public init(statusCode: Int, data: Data, requestID: String?, location: String? = nil) {
+  public init(
+    statusCode: Int, data: Data, requestID: String?, location: String? = nil, range: String? = nil
+  ) {
+    self.init(
+      statusCode: statusCode, data: data, requestID: requestID, location: location, range: range,
+      providerJSONDecoder: .live
+    )
+  }
+
+  init(
+    statusCode: Int, data: Data, requestID: String?, location: String? = nil, range: String? = nil,
+    providerJSONDecoder: GatewayProviderJSONDecoder
+  ) {
     self.statusCode = statusCode
     self.data = data
     self.requestID = requestID
     self.location = location
+    self.range = range
+    self.providerJSONDecoder = providerJSONDecoder
   }
+
+  func jsonObject() -> Any? { providerJSONDecoder.decode(data) }
 }
 
 public protocol GatewayHTTPTransport: Sendable {
@@ -41,8 +128,33 @@ public final class URLSessionGatewayTransport: GatewayHTTPTransport, @unchecked 
       statusCode: response.statusCode,
       data: state.data ?? Data(),
       requestID: response.value(forHTTPHeaderField: "x-goog-request-id"),
-      location: response.value(forHTTPHeaderField: "Location")
+      location: response.value(forHTTPHeaderField: "Location"),
+      range: response.value(forHTTPHeaderField: "Range")
     )
+  }
+}
+
+enum GatewayResumableUploadProgress {
+  static func confirmedOffset(
+    _ response: GatewayHTTPResponse, sessionURL: inout URL, sentFrom: Int, sentTo: Int
+  ) -> Int? {
+    if let location = response.location {
+      guard let updated = URL(string: location), approvedSessionURL(updated) else { return nil }
+      sessionURL = updated
+    }
+    guard
+      let range = response.range?.split(separator: "=", maxSplits: 1).last,
+      response.range?.hasPrefix("bytes=") == true,
+      let separator = range.lastIndex(of: "-"),
+      Int(range[..<separator]) == 0,
+      let acknowledged = Int(range[range.index(after: separator)...])
+    else { return nil }
+    guard acknowledged >= sentFrom, acknowledged < sentTo else { return nil }
+    return acknowledged + 1
+  }
+
+  private static func approvedSessionURL(_ url: URL) -> Bool {
+    url.scheme == "https" && ["www.googleapis.com", "upload.googleapis.com"].contains(url.host?.lowercased())
   }
 }
 
@@ -146,8 +258,18 @@ public enum GatewayInputValidator {
 
   // Request-body construction mirrors the audited provider command catalog.
   // Keeping its exhaustive cases together makes unsupported variants fail closed.
+  public static func body(
+    for role: GatewayRole, command: String, options: [String: [String]], inputDataOverrides: [String: Data] = [:]
+  ) throws -> Data? {
+    try body(for: role, command: command, options: options, inputDataOverrides: inputDataOverrides, cancellation: nil)
+  }
+
   // swiftlint:disable:next cyclomatic_complexity
-  public static func body(for role: GatewayRole, command: String, options: [String: [String]]) throws -> Data? {
+  static func body(
+    for role: GatewayRole, command: String, options: [String: [String]], inputDataOverrides: [String: Data] = [:],
+    cancellation: GatewaySDKCancellation?, structuralValidationObserver: @escaping @Sendable () -> Void = {},
+    jsonDecoder: GatewayProviderJSONDecoder = .live
+  ) throws -> Data? {
     switch (role.service, command) {
     case (.docs, "document create"), (.docs, "document batch-update"):
       let data: Data
@@ -156,9 +278,9 @@ public enum GatewayInputValidator {
       } else if command == "document batch-update", let text = options["text"]?.last {
         data = try GatewayReadableInput.documentAppendBody(text: text)
       } else {
-        data = try jsonSource(options)
+        data = try jsonSource(options, inputDataOverrides: inputDataOverrides)
       }
-      let object = try object(data)
+      let object = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       if command == "document create" {
         guard Set(object.keys) == ["title"], let title = object["title"] as? String, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
           throw GatewayError.invalidArgument("Document create JSON must contain only a non-empty title")
@@ -177,8 +299,8 @@ public enum GatewayInputValidator {
     case (.sheets, "spreadsheet get-by-data-filter"),
          (.sheets, "values batch-get-by-data-filter"),
          (.sheets, "developer-metadata search"):
-      let data = try inputFile(options)
-      let input = try object(data)
+      let data = try inputFile(options, inputDataOverrides: inputDataOverrides)
+      let input = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       guard let filters = input["dataFilters"] as? [Any], !filters.isEmpty else {
         throw GatewayError.invalidArgument("Data-filter input requires a non-empty dataFilters array")
       }
@@ -187,8 +309,8 @@ public enum GatewayInputValidator {
       let title = try required("title", options)
       return try JSONSerialization.data(withJSONObject: ["properties": ["title": title]], options: [.sortedKeys])
     case (.sheets, "spreadsheet batch-update"):
-      let data = try inputFile(options)
-      let input = try object(data)
+      let data = try inputFile(options, inputDataOverrides: inputDataOverrides)
+      let input = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       guard
         let requests = input["requests"] as? [[String: Any]],
         !requests.isEmpty,
@@ -207,29 +329,31 @@ public enum GatewayInputValidator {
     case (.sheets, "values append"), (.sheets, "values update"):
       let data: Data
       if options["values"] != nil || options["json-values"] != nil {
-        data = try GatewayReadableInput.sheetsValuesBody(options)
+        data = try GatewayReadableInput.sheetsValuesBody(
+          options, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder
+        )
       } else {
-        data = try inputFile(options)
+        data = try inputFile(options, inputDataOverrides: inputDataOverrides)
       }
-      let object = try object(data)
+      let object = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       try validateSheetsValues(object, batch: false)
       return data
     case (.sheets, "values batch-update"), (.sheets, "values batch-update-by-data-filter"):
-      let data = try inputFile(options)
-      var input = try object(data)
+      let data = try inputFile(options, inputDataOverrides: inputDataOverrides)
+      var input = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       try validateSheetsValues(input, batch: true)
       input["valueInputOption"] = options["value-input-option"]?.last ?? input["valueInputOption"] ?? "RAW"
       return try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])
     case (.sheets, "values batch-clear"):
-      let data = try inputFile(options)
-      let input = try object(data)
+      let data = try inputFile(options, inputDataOverrides: inputDataOverrides)
+      let input = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       guard let ranges = input["ranges"] as? [String], !ranges.isEmpty else {
         throw GatewayError.invalidArgument("Batch clear requires a non-empty ranges array")
       }
       return data
     case (.sheets, "values batch-clear-by-data-filter"):
-      let data = try inputFile(options)
-      let input = try object(data)
+      let data = try inputFile(options, inputDataOverrides: inputDataOverrides)
+      let input = try object(data, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
       guard let filters = input["dataFilters"] as? [Any], !filters.isEmpty else {
         throw GatewayError.invalidArgument("Batch clear requires a non-empty dataFilters array")
       }
@@ -256,7 +380,7 @@ public enum GatewayInputValidator {
       else {
         throw GatewayError.invalidArgument("Drive uploads require --max-bytes between 0 and 67108864")
       }
-      return try read(path: required("input", options), maximumBytes: maximum)
+      return try read(path: required("input", options), maximumBytes: maximum, inputDataOverrides: inputDataOverrides)
     case (.drive, "permissions create"):
       var body: [String: Any] = ["type": try required("type", options), "role": try required("role", options)]
       if let email = options["email"]?.last { body["emailAddress"] = email }
@@ -289,7 +413,7 @@ public enum GatewayInputValidator {
     }
   }
 
-  private static func jsonSource(_ options: [String: [String]]) throws -> Data {
+  private static func jsonSource(_ options: [String: [String]], inputDataOverrides: [String: Data]) throws -> Data {
     let sources = [options["json"]?.last, options["json-file"]?.last].compactMap { $0 }
     guard sources.count == 1 else { throw GatewayError.invalidArgument("Specify exactly one of --json or --json-file") }
     if options["json"] != nil {
@@ -297,16 +421,22 @@ public enum GatewayInputValidator {
       guard data.count <= maximumBodyBytes else { throw GatewayError.inputTooLarge }
       return data
     }
-    return try read(path: sources[0])
+    return try read(path: sources[0], inputDataOverrides: inputDataOverrides)
   }
 
-  private static func inputFile(_ options: [String: [String]], option: String = "input-file") throws -> Data {
-    try read(path: required(option, options))
+  private static func inputFile(
+    _ options: [String: [String]], option: String = "input-file", inputDataOverrides: [String: Data]
+  ) throws -> Data {
+    try read(path: required(option, options), inputDataOverrides: inputDataOverrides)
   }
 
-  private static func read(path: String, maximumBytes: Int = maximumBodyBytes) throws -> Data {
+  private static func read(
+    path: String, maximumBytes: Int = maximumBodyBytes, inputDataOverrides: [String: Data] = [:]
+  ) throws -> Data {
     let data: Data
-    if path == "-" {
+    if let snapshotData = inputDataOverrides[path] {
+      data = snapshotData
+    } else if path == "-" {
       data = FileHandle.standardInput.readDataToEndOfFile()
     } else {
       guard FileManager.default.fileExists(atPath: path) else { throw GatewayError.invalidArgument("Input file does not exist") }
@@ -316,10 +446,19 @@ public enum GatewayInputValidator {
     return data
   }
 
-  private static func object(_ data: Data) throws -> [String: Any] {
-    guard let result = try? JSONSerialization.jsonObject(with: data), let object = result as? [String: Any] else {
+  private static func object(
+    _ data: Data, cancellation: GatewaySDKCancellation?, structuralValidationObserver: @escaping @Sendable () -> Void,
+    jsonDecoder: GatewayProviderJSONDecoder
+  ) throws -> [String: Any] {
+    try checkCancellation(cancellation)
+    guard try GatewayBoundedProviderJSON.structureIsBounded(
+      data, cancellation: cancellation, progressObserver: structuralValidationObserver
+    ) else { throw GatewayError.inputTooLarge }
+    try checkCancellation(cancellation)
+    guard let result = jsonDecoder.decode(data), let object = result as? [String: Any] else {
       throw GatewayError.invalidArgument("Input must be a JSON object")
     }
+    try checkCancellation(cancellation)
     return object
   }
 
@@ -375,13 +514,16 @@ enum GatewayReadableInput {
     ])
   }
 
-  static func sheetsValuesBody(_ options: [String: [String]]) throws -> Data {
+  static func sheetsValuesBody(
+    _ options: [String: [String]], cancellation: GatewaySDKCancellation? = nil,
+    structuralValidationObserver: @escaping @Sendable () -> Void = {}, jsonDecoder: GatewayProviderJSONDecoder = .live
+  ) throws -> Data {
     try selectExactlyOne(options, names: ["values", "json-values", "input-file"])
     let values: [Any]
     if let row = options["values"]?.last {
       values = [row.split(separator: ",", omittingEmptySubsequences: false).map(String.init)]
     } else if let json = options["json-values"]?.last {
-      values = try jsonRows(json)
+      values = try jsonRows(json, cancellation: cancellation, structuralValidationObserver: structuralValidationObserver, jsonDecoder: jsonDecoder)
     } else {
       throw GatewayError.invalidArgument("Specify --values or --json-values")
     }
@@ -433,10 +575,19 @@ enum GatewayReadableInput {
     return name
   }
 
-  private static func jsonRows(_ source: String) throws -> [Any] {
-    guard let decoded = try? JSONSerialization.jsonObject(with: Data(source.utf8)), let items = decoded as? [Any], !items.isEmpty else {
+  private static func jsonRows(
+    _ source: String, cancellation: GatewaySDKCancellation?, structuralValidationObserver: @escaping @Sendable () -> Void,
+    jsonDecoder: GatewayProviderJSONDecoder
+  ) throws -> [Any] {
+    let data = Data(source.utf8)
+    try checkCancellation(cancellation)
+    guard try GatewayBoundedProviderJSON.structureIsBounded(
+      data, cancellation: cancellation, progressObserver: structuralValidationObserver
+    ) else { throw GatewayError.inputTooLarge }
+    guard let decoded = jsonDecoder.decode(data), let items = decoded as? [Any], !items.isEmpty else {
       throw GatewayError.invalidArgument("--json-values must be a non-empty JSON row or array of rows")
     }
+    try checkCancellation(cancellation)
     if items.allSatisfy(isScalar) { return [items] }
     guard items.allSatisfy({ row in
       guard let cells = row as? [Any], !cells.isEmpty else { return false }

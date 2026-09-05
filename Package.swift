@@ -17,8 +17,15 @@ let package = Package(
     .executable(name: "google-drive-gateway-reader", targets: ["GoogleDriveGatewayReader"]),
     .executable(name: "google-drive-gateway-writer", targets: ["GoogleDriveGatewayWriter"])
   ],
+  dependencies: [
+    // Operators replace this development path with a pinned URL for distribution.
+    .package(path: "../../gateway-sdk-kit")
+  ],
   targets: [
-    .target(name: "GoogleDocumentsGatewayCore"),
+    .target(
+      name: "GoogleDocumentsGatewayCore",
+      dependencies: [.product(name: "GatewaySDKKit", package: "gateway-sdk-kit")]
+    ),
     .executableTarget(
       name: "GoogleDocumentsGatewayCLI",
       dependencies: ["GoogleDocumentsGatewayCore"]
@@ -31,7 +38,7 @@ let package = Package(
     .executableTarget(name: "GoogleDriveGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
     .testTarget(
       name: "GoogleDocumentsGatewayCoreTests",
-      dependencies: ["GoogleDocumentsGatewayCore"]
+      dependencies: ["GoogleDocumentsGatewayCore", .product(name: "GatewaySDKKit", package: "gateway-sdk-kit")]
     )
   ],
   swiftLanguageModes: [.v6]

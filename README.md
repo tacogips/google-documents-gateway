@@ -152,6 +152,87 @@ Drive never sniffs file bytes.
 For a direct option value that begins with `--`, use the unambiguous
 `--option=value` form, such as `--text=--heading` or `--values=--pending`.
 
+## SDK and command schema
+
+`GoogleDocumentsGatewaySDK` provides a role-scoped `GatewaySDKKit` catalog for
+external adapters. The catalog is defense in depth; the existing command runner
+remains authoritative for tier enforcement and returns `FORBIDDEN_COMMAND` for
+a recognized command outside the selected role. Interactive `auth login` and
+`auth revoke` are intentionally absent. Schema reads are offline and neither
+authorize nor contact Google.
+
+```swift
+import GatewaySDKKit
+import GoogleDocumentsGatewayCore
+
+let sdk = GoogleDocumentsGatewaySDK(role: .init(service: .sheets, accessMode: .read))
+let result = await sdk.invoke(.init(
+  operation: "values get",
+  variables: ["spreadsheet-id": .string("sheet-id"), "range": .string("Sheet1!A1"), "dry-run": .bool(true)]
+))
+print(result.exitCode)
+```
+
+Use `execute(document:variables:environment:)` with a JSON argv array for
+policy-controlled raw execution, for example `["values","get","--spreadsheet-id","sheet-id","--range","Sheet1!A1","--dry-run"]`.
+Raw documents are capped at 2 MiB, 16,384 argv elements, and 64 KiB per UTF-8 argv token.
+Standalone `--help`/`-h` and `--version` remain available; embedded help and
+`auth login`/`auth revoke` are rejected. Catalog file arguments (`input`,
+`input-file`, and `json-file`) must be bounded single-link regular files and are copied to
+private snapshots before runner dispatch, so raw execution is not a verbatim
+argv passthrough for those inputs.
+
+SDK catalog variables have a 2 MiB encoded-source and aggregate-argv budget,
+with at most 16,384 JSON nodes (including the outer variables object) and
+128 levels of nesting; each emitted argv token remains limited to 64 KiB.
+Final non-upload provider request bodies are capped at 2 MiB. SDK executions
+default to a 30-second deadline and retain at most 8 MiB of each provider
+response or `--page-all` aggregate. Response parsing checks cancellation and caps JSON nesting
+at 128 levels and structural values at 16,384; `GatewaySDKExecutionPolicy` clamps response
+budgets to 1...64 MiB and deadlines to 0.01...600 seconds.
+Concurrency is normalized to 1...64 active workers with at most 256 queued calls per facade.
+If a private output-staging artifact cannot be unlinked after a failed write, the policy returns
+its recovery path and retains it for targeted retry. Keep the policy and SDK instances that
+reported a recovery, enumerate their pending collections, and retry only the stable recovery ID:
+
+```swift
+for recovery in policy.pendingOutputCleanupRecoveries {
+  _ = policy.retryPendingOutputCleanup(recoveryID: recovery.id)
+}
+for recovery in sdk.pendingSnapshotCleanupRecoveries {
+  _ = sdk.retryPendingSnapshotCleanup(recoveryID: recovery.id)
+}
+```
+
+An SDK call's `environment` is inline-only credential data: use the role's
+`*_OAUTH_CLIENT_SECRET_JSON`, `*_OAUTH_CLIENT_ID`, and `*_TOKEN_STORE_JSON`
+variables. Credential path variables, including `*_OAUTH_CLIENT_SECRET_PATH`,
+`*_TOKEN_STORE_PATH`, and credential-directory settings, are ignored by SDK
+calls. A host-controlled file-backed credential profile must instead be passed
+through the SDK constructor's `credentialProfile` parameter.
+
+After a remotely mutating or non-idempotent request crosses the provider
+dispatch boundary, any later timeout, cancellation, transport, response-limit,
+status, or decoding failure is non-retryable `OUTCOME_UNKNOWN` (exit 5).
+Response arrival alone does not make a retry safe.
+SDK filesystem access is default-deny: pass `GatewaySDKFileAccessPolicy` with
+explicit input and output directory roots for catalog file inputs or Drive
+downloads/exports; overwrite targets must be single-link regular files. Injected
+SDK transports must conform to `GatewayResponseByteLimitedHTTPTransport`, enforcing the supplied
+deadline, cancellation token, and receive-time response-byte limit. SDK calls are deadline-bounded and respect task cancellation;
+the standalone CLI retains its normal local filesystem behavior.
+The CLI exposes the same role-local catalog:
+
+```bash
+swift run google-sheet-gateway-reader schema print
+swift run google-sheet-gateway-reader schema search 'values get' --kinds command
+swift run google-sheet-gateway-reader operation run values get --variables '{"spreadsheet-id":"sheet-id","range":"Sheet1!A1","dry-run":true}'
+```
+
+This repository adds no Cursor adapter. External adapters consume the public
+SDK facade only; Riela integration and a remotely pinned kit dependency are
+later work.
+
 ## Development
 
 ```bash
