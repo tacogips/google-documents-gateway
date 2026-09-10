@@ -9,6 +9,9 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
   public let tokenStoreURL: URL
   public let tokenStoreJSON: String?
   public let tokenStorePathFromEnvironment: Bool
+  /// The legacy location is populated only for an unconfigured, synthesized
+  /// default. It is deliberately nil for kinko and explicit path overrides.
+  public let legacyTokenStoreURL: URL?
 
   public init(
     id: String,
@@ -17,7 +20,8 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     clientSecret: String? = nil,
     tokenStoreURL: URL,
     tokenStoreJSON: String? = nil,
-    tokenStorePathFromEnvironment: Bool = false
+    tokenStorePathFromEnvironment: Bool = false,
+    legacyTokenStoreURL: URL? = nil
   ) throws {
     try GatewayCredentialProfile.validateID(id)
     guard
@@ -31,6 +35,7 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     self.tokenStoreURL = tokenStoreURL
     self.tokenStoreJSON = tokenStoreJSON
     self.tokenStorePathFromEnvironment = tokenStorePathFromEnvironment
+    self.legacyTokenStoreURL = legacyTokenStoreURL
   }
 
   public static func validateID(_ id: String) throws {
@@ -56,7 +61,14 @@ public enum GatewayCredentialProfileLoader {
     let secretJSONKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_JSON"
     let secretPathKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_SECRET_PATH"
     let tokenJSONKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_JSON"
-    let tokenPath = environment[pathKey] ?? defaultTokenStoreURL(id: id, environment: environment).path
+    let pathOverride = nonBlank(environment[pathKey])
+    let credentialDirectoryOverride = nonBlank(environment["GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR"])
+    let tokenJSON = nonBlank(environment[tokenJSONKey])
+    let tokenPath = pathOverride ?? defaultTokenStoreURL(
+      id: id,
+      credentialDirectoryOverride: credentialDirectoryOverride,
+      environment: environment
+    ).path
     let installedClient = try loadInstalledClient(json: environment[secretJSONKey], path: environment[secretPathKey])
     guard let clientID = installedClient?.clientID ?? environment[clientKey], !clientID.isEmpty else {
       throw GatewayError.authenticationRequired
@@ -67,8 +79,11 @@ public enum GatewayCredentialProfileLoader {
       clientID: clientID,
       clientSecret: installedClient?.clientSecret,
       tokenStoreURL: URL(fileURLWithPath: tokenPath),
-      tokenStoreJSON: nonBlank(environment[tokenJSONKey]),
-      tokenStorePathFromEnvironment: nonBlank(environment[pathKey]) != nil
+      tokenStoreJSON: tokenJSON,
+      tokenStorePathFromEnvironment: pathOverride != nil,
+      legacyTokenStoreURL: pathOverride == nil && credentialDirectoryOverride == nil && tokenJSON == nil
+        ? legacyTokenStoreURL(id: id, environment: environment)
+        : nil
     )
   }
 
@@ -101,14 +116,27 @@ public enum GatewayCredentialProfileLoader {
   /// per-credential *_TOKEN_STORE_PATH (exact file) wins in load(role:) above,
   /// then GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR relocates the directory,
   /// then the XDG state default applies.
-  private static func defaultTokenStoreURL(id: String, environment: [String: String]) -> URL {
-    if let credentialDir = nonBlank(environment["GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR"]) {
+  private static func defaultTokenStoreURL(
+    id: String,
+    credentialDirectoryOverride: String?,
+    environment: [String: String]
+  ) -> URL {
+    if let credentialDir = credentialDirectoryOverride {
       return URL(fileURLWithPath: credentialDir).appendingPathComponent("\(id).json")
     }
-    let stateRoot = nonBlank(environment["XDG_STATE_HOME"])
+    let stateRoot = nonBlank(environment["XDG_STATE_HOME"]).flatMap { $0.hasPrefix("/") ? $0 : nil }
       ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state").path
     return URL(fileURLWithPath: stateRoot)
       .appendingPathComponent("google-documents-gateway/credentials/\(id).json")
+  }
+
+  /// The only location migrated is the pre-0.2.1 synthesized config default.
+  /// Do not derive a legacy path from an explicit token destination.
+  private static func legacyTokenStoreURL(id: String, environment: [String: String]) -> URL {
+    let configRoot = nonBlank(environment["XDG_CONFIG_HOME"]).flatMap { $0.hasPrefix("/") ? $0 : nil }
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config").path
+    return URL(fileURLWithPath: configRoot)
+      .appendingPathComponent("google-documents-gateway/tokens/\(id).json")
   }
 }
 
@@ -150,7 +178,7 @@ public struct GatewayTokenStore: Codable, Sendable, Equatable {
 
 public enum GatewayTokenStoreFile {
   public static func read(from url: URL, role: GatewayRole) throws -> GatewayTokenStore {
-    try decode(Data(contentsOf: url), role: role)
+    try decode(try secureRead(from: url), role: role)
   }
 
   public static func read(json: String, role: GatewayRole) throws -> GatewayTokenStore {
@@ -164,16 +192,86 @@ public enum GatewayTokenStoreFile {
   }
 
   public static func write(_ store: GatewayTokenStore, to url: URL) throws {
-    let directory = url.deletingLastPathComponent()
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let data = try JSONEncoder().encode(store)
-    try data.write(to: url, options: [.atomic])
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    try GatewaySecureTokenFilesystem.write(data, to: url, replacing: true)
   }
 
   public static func revoke(url: URL) throws {
-    guard FileManager.default.fileExists(atPath: url.path) else { return }
-    try FileManager.default.removeItem(at: url)
+    try GatewaySecureTokenFilesystem.remove(url)
+  }
+
+  private static let migrationMarker = Data("google-documents-gateway-token-migration-v1\n".utf8)
+
+  /// Record that the legacy synthesized source is permanently ineligible,
+  /// without reading it. Used before destructive lifecycle operations.
+  public static func completeLegacyMigration(profile: GatewayCredentialProfile) throws {
+    guard profile.legacyTokenStoreURL != nil else { return }
+    let marker = URL(fileURLWithPath: profile.tokenStoreURL.path + ".migration-complete")
+    try GatewaySecureTokenFilesystem.withMigrationLock(for: profile.tokenStoreURL) { try ensureMarker(marker) }
+  }
+
+  /// Copy a valid token from the former synthesized XDG config location only
+  /// when the state destination is absent. Atomic exclusive publication never
+  /// overwrites a concurrent login. Retain the legacy recovery copy, but a
+  /// durable marker permanently excludes it after migration or revoke.
+  public static func migrateLegacyStoreIfNeeded(profile: GatewayCredentialProfile) throws {
+    guard let legacy = profile.legacyTokenStoreURL else { return }
+    let marker = URL(fileURLWithPath: profile.tokenStoreURL.path + ".migration-complete")
+    guard try GatewaySecureTokenFilesystem.exists(marker) || GatewaySecureTokenFilesystem.exists(profile.tokenStoreURL)
+      || GatewaySecureTokenFilesystem.exists(legacy) else { return }
+    try GatewaySecureTokenFilesystem.withMigrationLock(for: profile.tokenStoreURL) {
+      try migrateLegacyStoreLocked(profile: profile)
+    }
+  }
+
+  private static func migrateLegacyStoreLocked(profile: GatewayCredentialProfile) throws {
+    guard let legacyURL = profile.legacyTokenStoreURL else { return }
+    let destination = profile.tokenStoreURL
+    guard legacyURL.path != destination.path else { return }
+    let marker = URL(fileURLWithPath: destination.path + ".migration-complete")
+    if try GatewaySecureTokenFilesystem.exists(marker) {
+      guard try secureRead(from: marker) == migrationMarker else { throw POSIXError(.EINVAL) }
+      return
+    }
+
+    if try GatewaySecureTokenFilesystem.exists(destination) {
+      _ = try secureRead(from: destination)
+      try ensureMarker(marker)
+      return
+    }
+    guard try GatewaySecureTokenFilesystem.exists(legacyURL) else { return }
+    let legacyData = try secureRead(from: legacyURL)
+    _ = try decode(legacyData, role: profile.role)
+    do {
+      try createExclusive(data: legacyData, at: destination)
+    } catch let error as POSIXError where error.code == .EEXIST {
+      _ = try secureRead(from: destination)
+      try ensureMarker(marker)
+      return
+    }
+    try ensureMarker(marker)
+    // Retain the legacy recovery copy. The durable marker makes it permanently
+    // ineligible, including after revoke or an interrupted later operation.
+  }
+
+  /// A durable migration marker, rather than deleting a legacy path, prevents
+  /// stale credentials from returning after login or revoke.
+  public static func discardLegacyStore(profile: GatewayCredentialProfile) throws {
+    try completeLegacyMigration(profile: profile)
+  }
+
+  private static func secureRead(from url: URL) throws -> Data {
+    try GatewaySecureTokenFilesystem.read(url)
+  }
+
+  private static func createExclusive(data: Data, at url: URL) throws {
+    try GatewaySecureTokenFilesystem.create(data, at: url)
+  }
+
+  private static func ensureMarker(_ marker: URL) throws {
+    do { try createExclusive(data: migrationMarker, at: marker) } catch let error as POSIXError where error.code == .EEXIST {
+      guard try secureRead(from: marker) == migrationMarker else { throw POSIXError(.EINVAL) }
+    }
   }
 }
 

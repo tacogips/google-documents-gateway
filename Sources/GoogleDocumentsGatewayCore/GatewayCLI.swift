@@ -639,7 +639,9 @@ public struct GatewayCommandRunner: Sendable {
     let profile = try resolvedProfile(credential)
     if command == "auth revoke" {
       guard options["confirm-credential"]?.last == credential else { throw GatewayError.invalidArgument("--confirm-credential must exactly match --credential") }
-      if let store = try? tokenStore(profile: profile) {
+      let store = try? tokenStore(profile: profile)
+      if profile.tokenStoreJSON == nil { try GatewayTokenStoreFile.completeLegacyMigration(profile: profile) }
+      if let store {
         try GatewayOAuthClient(profile: profile, transport: transport).revoke(store)
       }
       if profile.tokenStoreJSON == nil {
@@ -664,7 +666,9 @@ public struct GatewayCommandRunner: Sendable {
     let timeout = options["timeout-seconds"]?.last.flatMap(TimeInterval.init) ?? 180
     guard timeout > 0, timeout <= 600 else { throw GatewayError.invalidArgument("--timeout-seconds must be between 1 and 600") }
     let store = try GatewayLoopbackOAuth(profile: profile, transport: transport).login(timeout: timeout, openBrowser: openBrowser)
+    try GatewayTokenStoreFile.completeLegacyMigration(profile: profile)
     try GatewayTokenStoreFile.write(store, to: profile.tokenStoreURL)
+    try GatewayTokenStoreFile.discardLegacyStore(profile: profile)
     return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope]
       .merging(profile.tokenSourceDetails) { current, _ in current })
   }
@@ -717,6 +721,7 @@ public struct GatewayCommandRunner: Sendable {
     if let tokenStoreJSON = profile.tokenStoreJSON {
       return try GatewayTokenStoreFile.read(json: tokenStoreJSON, role: role)
     }
+    try GatewayTokenStoreFile.migrateLegacyStoreIfNeeded(profile: profile)
     return try GatewayTokenStoreFile.read(from: profile.tokenStoreURL, role: role)
   }
 }
