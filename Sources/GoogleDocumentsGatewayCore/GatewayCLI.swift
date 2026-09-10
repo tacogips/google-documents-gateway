@@ -85,11 +85,11 @@ public struct GatewayCommandRunner: Sendable {
     } catch GatewayError.inputTooLarge {
       return failure("INPUT_TOO_LARGE", "The input exceeds the configured command size limit.", exitCode: 2)
     } catch GatewayError.authenticationRequired {
-      return failure("AUTH_REQUIRED", "Configure a role-specific OAuth credential. Token values are not accepted as command arguments.", exitCode: 4)
+      return failure("AUTH_REQUIRED", authDiagnosticMessage("Configure a role-specific OAuth credential. Token values are not accepted as command arguments.", arguments: arguments), exitCode: 4)
     } catch GatewayError.grantInspectionFailed {
       return failure("GRANT_INSPECTION_FAILED", "The imported token grant could not be inspected online; provider use is denied.", exitCode: 4)
     } catch GatewayError.scopeMismatch {
-      return failure("SCOPE_MISMATCH", "The inspected token grant does not exactly match this executable role.", exitCode: 4)
+      return failure("SCOPE_MISMATCH", authDiagnosticMessage("The inspected token grant does not exactly match this executable role.", arguments: arguments), exitCode: 4)
     } catch GatewayError.transportFailure(let message) {
       return failure("TRANSPORT_FAILURE", message, exitCode: 5)
     } catch {
@@ -653,7 +653,7 @@ public struct GatewayCommandRunner: Sendable {
       ])
     }
     guard profile.tokenStoreJSON == nil else {
-      throw GatewayError.invalidArgument("auth login cannot replace an environment-provided token store")
+      throw GatewayError.invalidArgument(profile.tokenSourceMessage("auth login cannot replace an immutable environment token store"))
     }
     let openBrowser: Bool
     switch options["open-browser"]?.last?.lowercased() ?? "true" {
@@ -665,7 +665,8 @@ public struct GatewayCommandRunner: Sendable {
     guard timeout > 0, timeout <= 600 else { throw GatewayError.invalidArgument("--timeout-seconds must be between 1 and 600") }
     let store = try GatewayLoopbackOAuth(profile: profile, transport: transport).login(timeout: timeout, openBrowser: openBrowser)
     try GatewayTokenStoreFile.write(store, to: profile.tokenStoreURL)
-    return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope])
+    return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope]
+      .merging(profile.tokenSourceDetails) { current, _ in current })
   }
 
   private func diagnosticResult(command: String, options: [String: [String]]) throws -> GatewayCommandResult {
@@ -681,7 +682,13 @@ public struct GatewayCommandRunner: Sendable {
       "tokenStoreSource": profile.tokenStoreJSON == nil ? "file" : "environment",
       "hasRefreshToken": store?.refreshToken?.isEmpty == false,
       "expiresAt": store?.expiresAt?.description ?? NSNull()
-    ])
+    ].merging(profile.tokenSourceDetails) { current, _ in current })
+  }
+
+  private func authDiagnosticMessage(_ message: String, arguments: [String]) -> String {
+    let credential = (try? ParsedArguments(arguments).options["credential"]?.last) ?? role.identifier
+    guard let profile = try? resolvedProfile(credential) else { return message }
+    return profile.tokenSourceMessage(message)
   }
 
   private static func defaultAuthorizer(

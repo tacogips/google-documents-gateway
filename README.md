@@ -1,5 +1,12 @@
 # google-documents-gateway
 
+Credential token selection prefers `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_JSON`
+over `TOKEN_STORE_PATH` and the default token file. Inline JSON is immutable;
+unset the exact variable before login. Login and auth status report `tokenSource`,
+the selected file path, and `tokenSourceHint` for subsequent commands. Authentication
+and scope errors identify the override that selected the failing token without
+printing credential values.
+
 A Swift command line tool
 
 ## Google document gateways

@@ -101,10 +101,16 @@ public struct PersistedTokenAuthorizer: GatewayAuthorizing {
   }
 
   private func loadStore(role: GatewayRole) throws -> GatewayTokenStore {
-    if let tokenStoreJSON = profile.tokenStoreJSON {
-      return try GatewayTokenStoreFile.read(json: tokenStoreJSON, role: role)
+    do {
+      if let tokenStoreJSON = profile.tokenStoreJSON {
+        return try GatewayTokenStoreFile.read(json: tokenStoreJSON, role: role)
+      }
+      return try GatewayTokenStoreFile.read(from: profile.tokenStoreURL, role: role)
+    } catch let error as GatewayError {
+      throw error
+    } catch {
+      throw GatewayError.authenticationRequired
     }
-    return try GatewayTokenStoreFile.read(from: profile.tokenStoreURL, role: role)
   }
 }
 

@@ -8,6 +8,7 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
   public let clientSecret: String?
   public let tokenStoreURL: URL
   public let tokenStoreJSON: String?
+  public let tokenStorePathFromEnvironment: Bool
 
   public init(
     id: String,
@@ -15,7 +16,8 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     clientID: String,
     clientSecret: String? = nil,
     tokenStoreURL: URL,
-    tokenStoreJSON: String? = nil
+    tokenStoreJSON: String? = nil,
+    tokenStorePathFromEnvironment: Bool = false
   ) throws {
     try GatewayCredentialProfile.validateID(id)
     guard
@@ -28,6 +30,7 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     self.clientSecret = clientSecret
     self.tokenStoreURL = tokenStoreURL
     self.tokenStoreJSON = tokenStoreJSON
+    self.tokenStorePathFromEnvironment = tokenStorePathFromEnvironment
   }
 
   public static func validateID(_ id: String) throws {
@@ -64,7 +67,8 @@ public enum GatewayCredentialProfileLoader {
       clientID: clientID,
       clientSecret: installedClient?.clientSecret,
       tokenStoreURL: URL(fileURLWithPath: tokenPath),
-      tokenStoreJSON: nonBlank(environment[tokenJSONKey])
+      tokenStoreJSON: nonBlank(environment[tokenJSONKey]),
+      tokenStorePathFromEnvironment: nonBlank(environment[pathKey]) != nil
     )
   }
 
