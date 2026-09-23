@@ -181,7 +181,6 @@ import Testing
   )
   let read = await reader.invoke(.init(operation: "document get", variables: ["document-id": .string("document")]), environment: [:])
   #expect(read.errors.first?.code == "TRANSPORT_FAILURE")
-
   let writeTransport = GatewaySDKBoundaryTransport(response: .init(statusCode: 200, data: Data("not-json".utf8), requestID: nil))
   let writer = GoogleDocumentsGatewaySDK(
     role: .init(service: .sheets, accessMode: .write), authorizer: GatewaySDKBoundaryAuthorizer(), transport: writeTransport
@@ -425,7 +424,6 @@ import Testing
   let result = await paged.invoke(.init(operation: "files list", variables: ["page-all": .bool(true), "max-pages": .int(2)]), environment: [:])
   #expect(result.errors.first?.code == "RESPONSE_LIMIT_EXCEEDED"); #expect(pages.calls == 2)
 }
-
 @Test func sdkBoundsRenderedArgvFinalRequestBodiesAndTraversalCancellation() async throws {
   let firstRange = String(repeating: "a", count: 40_000)
   let secondRange = String(repeating: "b", count: 40_000)
@@ -446,7 +444,6 @@ import Testing
   #expect(listArgv.contains(firstRange))
   #expect(listArgv.contains(secondRange))
   #expect((await rangeSDK.invoke(individuallyBoundedRanges, environment: [:])).exitCode == 0)
-
   let oversizedJSONTransport = GatewaySDKBoundaryTransport()
   let oversizedJSONSDK = GoogleDocumentsGatewaySDK(
     role: .init(service: .docs, accessMode: .write), authorizer: GatewaySDKBoundaryAuthorizer(),
@@ -946,6 +943,8 @@ import Testing
   let input = root.appendingPathComponent("input.txt")
   try Data("fixture".utf8).write(to: input)
   let probe = PreparationProbe()
+  let submissions = ExecutionSubmissionProbe()
+  let limiter = GatewaySDKExecutionLimiter(limit: 1, submissionObserver: submissions.record)
   let snapshotter = CatalogFileSnapshotter { _, variables in
     probe.enter()
     defer { probe.leave() }
@@ -956,7 +955,7 @@ import Testing
     role: .init(service: .drive, accessMode: .write),
     catalogFileSnapshotter: snapshotter,
     fileAccessPolicy: .init(inputRoots: [root]),
-    executionPolicy: .init(timeout: 0.02, maximumConcurrentOperations: 1)
+    executionPolicy: .init(timeout: 5, maximumConcurrentOperations: 1), executionLimiter: limiter
   )
   let active = Task {
     await sdk.invoke(.init(operation: "files upload", variables: [
@@ -964,14 +963,16 @@ import Testing
     ]), environment: [:])
   }
   #expect(await gatewaySDKTestHandshake { probe.waitForEntry() })
-  let queuedBindingFailure = await sdk.invoke(
-    .init(operation: "files upload", variables: [:]),
-    environment: [:]
-  )
-  #expect(queuedBindingFailure.exitCode == 5)
-  #expect(queuedBindingFailure.errors.first?.code == "TRANSPORT_FAILURE")
+  let queuedBinding = Task {
+    await sdk.invoke(.init(operation: "folders create", variables: [:]), environment: [:])
+  }
+  #expect(await gatewaySDKTestHandshake { submissions.waitForSubmissions(2) })
   probe.release()
-  _ = await active.value
+  #expect((await active.value).exitCode == 0)
+  let queuedBindingFailure = await queuedBinding.value
+  #expect(queuedBindingFailure.exitCode == 2)
+  #expect(queuedBindingFailure.rawOutput.isEmpty)
+  #expect(queuedBindingFailure.errors.first?.message == "operation 'folders create' requires variable 'name'")
 }
 @Test func sdkPreservesPostSnapshotBindingErrorsAsGatewaySDKEnvelopes() async throws {
   let root = try gatewaySDKTestScratchDirectory()
