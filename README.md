@@ -1,5 +1,12 @@
 # google-documents-gateway
 
+Credential token selection prefers `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_JSON`
+over `TOKEN_STORE_PATH` and the default token file. Inline JSON is immutable;
+unset the exact variable before login. Login and auth status report `tokenSource`,
+the selected file path, and `tokenSourceHint` for subsequent commands. Authentication
+and scope errors identify the override that selected the failing token without
+printing credential values.
+
 A Swift command line tool
 
 ## Google document gateways
@@ -82,7 +89,17 @@ Tokens default to
 mode `0600`. Relocate the whole directory with
 `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR`, or override one file with the
 matching `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH`
-variable (the per-file variable wins). `doctor`,
+variable (the per-file variable wins). The first file-backed use of an
+unconfigured default safely migrates its former synthesized location,
+`${XDG_CONFIG_HOME:-~/.config}/google-documents-gateway/tokens/<role>.json`,
+only when no state token exists; explicit paths, credential directories, and
+kinko JSON are never migrated. The managed credential directories use mode
+`0700`; token reads reject symbolic links and hard-linked/non-regular files.
+The legacy file remains an untouched recovery copy; a durable
+`.migration-complete` marker makes it ineligible after migration, revoke, or a
+successful new login. Keep that marker while retaining the recovery copy so a
+revoked token cannot return after restart. Empty or relative `XDG_STATE_HOME`
+and `XDG_CONFIG_HOME` values are ignored. `doctor`,
 `auth status`, and `auth revoke --confirm-credential <role>` never print token
 or client-secret values.
 

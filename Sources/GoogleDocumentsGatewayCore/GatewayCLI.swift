@@ -188,11 +188,11 @@ public struct GatewayCommandRunner: Sendable {
     } catch GatewayError.inputTooLarge {
       return Self.canonicalFailure(for: GatewayError.inputTooLarge)!
     } catch GatewayError.authenticationRequired {
-      return failure("AUTH_REQUIRED", "Configure a role-specific OAuth credential. Token values are not accepted as command arguments.", exitCode: 4)
+      return failure("AUTH_REQUIRED", authDiagnosticMessage("Configure a role-specific OAuth credential. Token values are not accepted as command arguments.", arguments: arguments), exitCode: 4)
     } catch GatewayError.grantInspectionFailed {
       return failure("GRANT_INSPECTION_FAILED", "The imported token grant could not be inspected online; provider use is denied.", exitCode: 4)
     } catch GatewayError.scopeMismatch {
-      return failure("SCOPE_MISMATCH", "The inspected token grant does not exactly match this executable role.", exitCode: 4)
+      return failure("SCOPE_MISMATCH", authDiagnosticMessage("The inspected token grant does not exactly match this executable role.", arguments: arguments), exitCode: 4)
     } catch GatewayError.transportFailure(let message) {
       if message.hasPrefix("OUTCOME_UNKNOWN:") {
         if message.hasPrefix("OUTCOME_UNKNOWN: SDK_LOCAL_PUBLICATION_UNCERTAIN") {
@@ -758,7 +758,9 @@ public struct GatewayCommandRunner: Sendable {
     }
     return nil
   }
+}
 
+private extension GatewayCommandRunner {
   private func authenticationResult(command: String, options: [String: [String]]) throws -> GatewayCommandResult {
     if command == "auth login", options["authorization-code"] != nil || options["pkce-verifier"] != nil {
       throw GatewayError.invalidArgument("Authorization codes and PKCE verifiers are not accepted as command arguments")
@@ -768,7 +770,9 @@ public struct GatewayCommandRunner: Sendable {
     let profile = try resolvedProfile(credential)
     if command == "auth revoke" {
       guard options["confirm-credential"]?.last == credential else { throw GatewayError.invalidArgument("--confirm-credential must exactly match --credential") }
-      if let store = try? tokenStore(profile: profile) {
+      let store = try? tokenStore(profile: profile)
+      if profile.tokenStoreJSON == nil { try GatewayTokenStoreFile.completeLegacyMigration(profile: profile) }
+      if let store {
         try GatewayOAuthClient(profile: profile, transport: transport).revoke(store)
       }
       if profile.tokenStoreJSON == nil {
@@ -782,7 +786,7 @@ public struct GatewayCommandRunner: Sendable {
       ])
     }
     guard profile.tokenStoreJSON == nil else {
-      throw GatewayError.invalidArgument("auth login cannot replace an environment-provided token store")
+      throw GatewayError.invalidArgument(profile.tokenSourceMessage("auth login cannot replace an immutable environment token store"))
     }
     let openBrowser: Bool
     switch options["open-browser"]?.last?.lowercased() ?? "true" {
@@ -793,8 +797,11 @@ public struct GatewayCommandRunner: Sendable {
     let timeout = options["timeout-seconds"]?.last.flatMap(TimeInterval.init) ?? 180
     guard timeout > 0, timeout <= 600 else { throw GatewayError.invalidArgument("--timeout-seconds must be between 1 and 600") }
     let store = try GatewayLoopbackOAuth(profile: profile, transport: transport).login(timeout: timeout, openBrowser: openBrowser)
+    try GatewayTokenStoreFile.completeLegacyMigration(profile: profile)
     try GatewayTokenStoreFile.write(store, to: profile.tokenStoreURL)
-    return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope])
+    try GatewayTokenStoreFile.discardLegacyStore(profile: profile)
+    return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope]
+      .merging(profile.tokenSourceDetails) { current, _ in current })
   }
 
   private func diagnosticResult(command: String, options: [String: [String]]) throws -> GatewayCommandResult {
@@ -817,7 +824,13 @@ public struct GatewayCommandRunner: Sendable {
       "tokenStoreSource": profile.tokenStoreJSON == nil ? "file" : "environment",
       "hasRefreshToken": store?.refreshToken?.isEmpty == false,
       "expiresAt": store?.expiresAt?.description ?? NSNull()
-    ])
+    ].merging(profile.tokenSourceDetails) { current, _ in current })
+  }
+
+  private func authDiagnosticMessage(_ message: String, arguments: [String]) -> String {
+    let credential = (try? ParsedArguments(arguments).options["credential"]?.last) ?? role.identifier
+    guard let profile = try? resolvedProfile(credential) else { return message }
+    return profile.tokenSourceMessage(message)
   }
 
   private func resolvedProfile(_ credential: String) throws -> GatewayCredentialProfile {
@@ -848,6 +861,8 @@ public struct GatewayCommandRunner: Sendable {
       return try GatewayTokenStoreFile.read(json: tokenStoreJSON, role: role)
     }
     if let cancellation {
+      // The SDK path uses a bounded, cancellation-aware read. Legacy migration
+      // is a synchronous CLI lifecycle operation and must not run inside it.
       let data = try GatewaySDKCredentialProfileLoader.boundedData(
         at: profile.tokenStoreURL.path,
         cancellation: cancellation
@@ -857,6 +872,7 @@ public struct GatewayCommandRunner: Sendable {
       if cancellation.isCancelled { throw GatewayError.transportFailure("SDK execution was cancelled") }
       return store
     }
+    try GatewayTokenStoreFile.migrateLegacyStoreIfNeeded(profile: profile)
     return try GatewayTokenStoreFile.read(from: profile.tokenStoreURL, role: role)
   }
 

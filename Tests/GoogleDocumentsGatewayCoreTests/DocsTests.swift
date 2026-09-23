@@ -48,6 +48,18 @@ import Testing
   )
 }
 
+@Test func docsCredentialLoaderIgnoresRelativeXDGRoots() throws {
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "XDG_STATE_HOME": "relative-state",
+    "XDG_CONFIG_HOME": "relative-config"
+  ])
+  let home = FileManager.default.homeDirectoryForCurrentUser.path
+  #expect(profile.tokenStoreURL.path == "\(home)/.local/state/google-documents-gateway/credentials/docs-reader.json")
+  #expect(profile.legacyTokenStoreURL?.path == "\(home)/.config/google-documents-gateway/tokens/docs-reader.json")
+}
+
 @Test func docsCredentialLoaderHonorsCredentialDirOverPathDefaults() throws {
   let role = GatewayRole(service: .docs, accessMode: .read)
   let environment = [
@@ -68,6 +80,73 @@ import Testing
   ]
   let profile = try GatewayCredentialProfileLoader.load(role: role, environment: environment)
   #expect(profile.tokenStoreURL.path == "/tmp/exact.json")
+}
+
+@Test func docsMigrationNeverOverwritesAnExistingStateTokenOrUsesOverrides() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let stateHome = root.appendingPathComponent("state")
+  let configHome = root.appendingPathComponent("config")
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let legacyURL = configHome.appendingPathComponent("google-documents-gateway/tokens/docs-reader.json")
+  let stateURL = stateHome.appendingPathComponent("google-documents-gateway/credentials/docs-reader.json")
+  try GatewayTokenStoreFile.write(GatewayTokenStore(role: role, accessToken: "legacy", refreshToken: "refresh", expiresAt: .distantFuture), to: legacyURL)
+  try GatewayTokenStoreFile.write(GatewayTokenStore(role: role, accessToken: "state", refreshToken: "refresh", expiresAt: .distantFuture), to: stateURL)
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "XDG_STATE_HOME": stateHome.path,
+    "XDG_CONFIG_HOME": configHome.path
+  ])
+  #expect(try PersistedTokenAuthorizer(profile: profile).accessToken(for: role) == "state")
+  #expect(try GatewayTokenStoreFile.read(from: stateURL, role: role).accessToken == "state")
+  #expect(FileManager.default.fileExists(atPath: legacyURL.path))
+  #expect(FileManager.default.fileExists(atPath: stateURL.path + ".migration-complete"))
+  try GatewayTokenStoreFile.revoke(url: stateURL)
+  #expect(throws: Error.self) { try PersistedTokenAuthorizer(profile: profile).accessToken(for: role) }
+
+  let overrideURL = root.appendingPathComponent("explicit.json")
+  let overridden = try GatewayCredentialProfileLoader.load(role: role, environment: [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_PATH": overrideURL.path,
+    "XDG_CONFIG_HOME": configHome.path
+  ])
+  #expect(overridden.legacyTokenStoreURL == nil)
+}
+
+@Test func docsRejectsSymbolicLinkAndHardLinkTokenFiles() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  let target = root.appendingPathComponent("target.json")
+  try Data("{}".utf8).write(to: target)
+  let symbolic = root.appendingPathComponent("symbolic.json")
+  try FileManager.default.createSymbolicLink(at: symbolic, withDestinationURL: target)
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  #expect(throws: Error.self) { try GatewayTokenStoreFile.read(from: symbolic, role: role) }
+
+  let linked = root.appendingPathComponent("linked.json")
+  try FileManager.default.linkItem(at: target, to: linked)
+  #expect(throws: Error.self) { try GatewayTokenStoreFile.read(from: linked, role: role) }
+}
+
+@Test func docsMigrationRejectsStateAncestorSymlink() throws {
+  let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let state = root.appendingPathComponent("state")
+  let config = root.appendingPathComponent("config")
+  let outside = root.appendingPathComponent("outside")
+  try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(at: state.appendingPathComponent("google-documents-gateway"), withDestinationURL: outside)
+  let role = GatewayRole(service: .docs, accessMode: .read)
+  let legacy = config.appendingPathComponent("google-documents-gateway/tokens/docs-reader.json")
+  try GatewayTokenStoreFile.write(GatewayTokenStore(role: role, accessToken: "legacy", refreshToken: "refresh", expiresAt: .distantFuture), to: legacy)
+  let profile = try GatewayCredentialProfileLoader.load(role: role, environment: [
+    "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_ID": "desktop-client",
+    "XDG_STATE_HOME": state.path, "XDG_CONFIG_HOME": config.path
+  ])
+  #expect(throws: Error.self) { try PersistedTokenAuthorizer(profile: profile).accessToken(for: role) }
+  #expect((try? FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty) == true)
 }
 
 @Test func docsCredentialLoaderAndAuthorizerReadTokenStoreJSON() throws {

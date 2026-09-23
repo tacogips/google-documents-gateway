@@ -18,8 +18,7 @@ let package = Package(
     .executable(name: "google-drive-gateway-writer", targets: ["GoogleDriveGatewayWriter"])
   ],
   dependencies: [
-    // Operators replace this development path with a pinned URL for distribution.
-    .package(path: "../../gateway-sdk-kit")
+    .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")
   ],
   targets: [
     .target(
