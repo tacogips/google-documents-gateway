@@ -227,6 +227,8 @@ variables. Credential path variables, including `*_OAUTH_CLIENT_SECRET_PATH`,
 `*_TOKEN_STORE_PATH`, and credential-directory settings, are ignored by SDK
 calls. A host-controlled file-backed credential profile must instead be passed
 through the SDK constructor's `credentialProfile` parameter.
+Bounded SDK calls read that profile's current token path directly; legacy
+default-token migration remains a standalone CLI lifecycle operation.
 
 After a remotely mutating or non-idempotent request crosses the provider
 dispatch boundary, any later timeout, cancellation, transport, response-limit,
@@ -247,8 +249,8 @@ swift run google-sheet-gateway-reader operation run values get --variables '{"sp
 ```
 
 This repository adds no Cursor adapter. External adapters consume the public
-SDK facade only; Riela integration and a remotely pinned kit dependency are
-later work.
+SDK facade only. The package pins `GatewaySDKKit` 0.1.0 from its public Git
+URL; Riela integration is a separate work package.
 
 ## Development
 

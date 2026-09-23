@@ -39,6 +39,12 @@ decoding failure may imply that retry is safe. All such failures return non-retr
 
 The kit is dependency-free, so `Package.resolved` gains no remote pins.
 
+Publication integration update (2026-09-23): the development-only path above
+was replaced on `feat/gateway-sdk` by the public exact-version
+`https://github.com/tacogips/gateway-sdk-kit.git` dependency at `0.1.0`.
+`Package.resolved` now records that remote pin. This changes package
+distribution, not the facade or catalog behavior specified below.
+
 ## 3. File layout (all new files under `Sources/GoogleDocumentsGatewayCore/SDK/`)
 
 | File | Contents |

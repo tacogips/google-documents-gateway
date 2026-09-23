@@ -1,7 +1,9 @@
 # GoogleDocumentsGatewaySDK command facade and role-scoped catalog
 
-**Status**: Complete; Step 6 session-124 remediation and repeated default-suite stability verification passed locally with no push.
-`codex-design-and-implement-review-loop-session-124`.
+**Status**: Facade implementation complete; integrated with v0.3.2 mainline and
+public kit pin on `feat/gateway-sdk`; publication decision pending. The original
+session-124 no-push boundary applied to its local development run.
+**Original Workflow Session**: `codex-design-and-implement-review-loop-session-124`.
 **Workflow Mode**: `issue-resolution`
 **Issue**: `Add GoogleDocumentsGatewaySDK and command catalog on GatewaySDKKit`
 **Issue Number / URL**: Not supplied
@@ -1097,3 +1099,22 @@ containing only the 26-path allowlist.
   execution-boundary, and credential-persistence suites plus the complete default suite, build,
   lint, whitespace, size, scope, reference-kit, and clean-tree checks are required before the
   authorized local amendment; no push occurs.
+
+## 2026-09-23 public dependency integration
+
+The operator asked for the facade to resolve Riela's missing public dependency.
+The retained `feat/gateway-sdk` branch was reconciled with v0.3.2 `main`,
+including its XDG-state token migration. The one merge conflict in
+`GatewayCLI.swift` preserves cancellation-aware bounded SDK token reads and
+keeps synchronous legacy migration on the direct CLI path. A deterministic
+queued-binding test amendment is `8617ce9`; the mainline merge is `92261e5`.
+The manifest now pins public `GatewaySDKKit` 0.1.0 at revision
+`4d4b56c686f6875defccb54f74e2276022eb524e`, with no local path dependency.
+
+On the merged, URL-pinned tree, `mise run build` passed, `mise run test` passed
+170 tests, `mise run lint` reported zero violations, and
+`mise run gateway:help` passed for all six role executables. The focused
+pre-merge `GatewaySDKExecutionBoundaryTests` passed 35 tests. Both
+`git diff --check` and `git diff --cached --check` passed during merge resolution.
+Publication and the downstream Riela pin remain separate, unverified steps;
+this entry does not claim either is complete.
