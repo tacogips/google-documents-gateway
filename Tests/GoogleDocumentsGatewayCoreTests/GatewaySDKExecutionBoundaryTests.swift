@@ -820,8 +820,8 @@ import Testing
   let result = runner.run(arguments: ["document", "get", "--document-id", "doc"])
   #expect(await gatewaySDKTestHandshake { readerProbe.waitForCompletion() })
   #expect(!readerProbe.wasOpened)
-  #expect(result.exitCode == 4)
-  #expect(result.stdout.contains("AUTH_REQUIRED"))
+  #expect(result.exitCode == 5)
+  #expect(result.stdout.contains("TRANSPORT_FAILURE"))
   #expect(transport.calls == 0)
   #expect(!FileManager.default.fileExists(atPath: tokenPath.path))
 }

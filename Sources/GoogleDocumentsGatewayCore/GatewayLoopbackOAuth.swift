@@ -12,6 +12,7 @@ public struct GatewayLoopbackOAuth: Sendable {
   }
 
   public func login(timeout: TimeInterval = 180, openBrowser: Bool = true) throws -> GatewayTokenStore {
+    guard !profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GatewayError.authenticationRequired }
     let callback = LoopbackCallback()
     let port = try callback.start(timeout: min(timeout, 10))
     defer { callback.cancel() }

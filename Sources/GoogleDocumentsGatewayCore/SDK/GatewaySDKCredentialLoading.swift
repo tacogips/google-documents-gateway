@@ -121,7 +121,8 @@ struct GatewaySDKPersistedAuthorizer: GatewayCancellableAuthorizer {
 
   private func refresh(_ previous: GatewayTokenStore) throws -> GatewayTokenStore {
     try previous.validates(role: profile.role)
-    guard let refreshToken = previous.refreshToken, !refreshToken.isEmpty,
+    guard !profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          let refreshToken = previous.refreshToken, !refreshToken.isEmpty,
           let endpoint = URL(string: "https://oauth2.googleapis.com/token") else {
       throw GatewayError.authenticationRequired
     }
@@ -260,6 +261,9 @@ enum GatewaySDKCredentialProfileLoader {
   ) throws -> GatewayCredentialProfile {
     let id = nonBlank(credentialID) ?? role.identifier
     try GatewayCredentialProfile.validateID(id)
+    try check(cancellation)
+    let environment = try gatewayCredentialEnvironment(role: role, id: id, source: environment)
+    try check(cancellation)
     let suffix = id.uppercased().map { $0.isLetter || $0.isNumber ? String($0) : "_" }.joined()
     let prefix = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_"
     let client: SDKInstalledClient?
@@ -269,7 +273,7 @@ enum GatewaySDKCredentialProfileLoader {
     let inlineClientID = try boundedNonBlankInline(
       environment[prefix + "OAUTH_CLIENT_ID"], cancellation: cancellation, maximumBytes: maximumFieldBytes
     )?.value
-    guard let clientID = client?.clientID ?? inlineClientID else { throw GatewayError.authenticationRequired }
+    let clientID = client?.clientID ?? inlineClientID ?? ""
     let tokenStoreJSON = try boundedNonBlankInline(environment[prefix + "TOKEN_STORE_JSON"], cancellation: cancellation)
     // An SDK environment is call-scoped data, not authority over the host filesystem. File
     // credentials remain available only through a constructor-injected trusted profile.

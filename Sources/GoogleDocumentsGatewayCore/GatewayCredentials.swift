@@ -24,10 +24,6 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     legacyTokenStoreURL: URL? = nil
   ) throws {
     try GatewayCredentialProfile.validateID(id)
-    guard
-          !clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw GatewayError.invalidArgument("Credential ID and OAuth client ID are required")
-    }
     self.id = id
     self.role = role
     self.clientID = clientID
@@ -55,6 +51,7 @@ public enum GatewayCredentialProfileLoader {
   public static func load(role: GatewayRole, credentialID: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment) throws -> GatewayCredentialProfile {
     let id = credentialID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? credentialID! : role.identifier
     try GatewayCredentialProfile.validateID(id)
+    let environment = try gatewayCredentialEnvironment(role: role, id: id, source: environment)
     let suffix = id.uppercased().map { $0.isLetter || $0.isNumber ? String($0) : "_" }.joined()
     let pathKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_TOKEN_STORE_PATH"
     let clientKey = "GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_\(suffix)_OAUTH_CLIENT_ID"
@@ -70,7 +67,8 @@ public enum GatewayCredentialProfileLoader {
       environment: environment
     ).path
     let installedClient = try loadInstalledClient(json: environment[secretJSONKey], path: environment[secretPathKey])
-    guard let clientID = installedClient?.clientID ?? environment[clientKey], !clientID.isEmpty else {
+    let clientID = installedClient?.clientID ?? nonBlank(environment[clientKey]) ?? ""
+    guard !clientID.isEmpty || tokenJSON != nil || pathOverride != nil || FileManager.default.fileExists(atPath: tokenPath) else {
       throw GatewayError.authenticationRequired
     }
     return try GatewayCredentialProfile(
@@ -277,6 +275,7 @@ public enum GatewayTokenStoreFile {
 
 public enum GatewayOAuthPKCE {
   public static func authorizationURL(profile: GatewayCredentialProfile, redirectURI: String, state: String, verifier: String) throws -> URL {
+    guard !profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GatewayError.authenticationRequired }
     guard !state.isEmpty, verifier.count >= 43, verifier.count <= 128 else { throw GatewayError.invalidArgument("OAuth state or PKCE verifier is invalid") }
     let digest = SHA256.hash(data: Data(verifier.utf8))
     let challenge = Data(digest).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
@@ -322,6 +321,7 @@ public struct GatewayOAuthClient: Sendable {
   }
 
   public func exchangeAuthorizationCode(_ code: String, redirectURI: String, verifier: String) throws -> GatewayTokenStore {
+    guard !profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GatewayError.authenticationRequired }
     guard !code.isEmpty, !redirectURI.isEmpty, verifier.count >= 43 else {
       throw GatewayError.invalidArgument("OAuth authorization-code inputs are invalid")
     }
@@ -336,7 +336,8 @@ public struct GatewayOAuthClient: Sendable {
 
   public func refresh(_ previous: GatewayTokenStore) throws -> GatewayTokenStore {
     try previous.validates(role: profile.role)
-    guard let refreshToken = previous.refreshToken, !refreshToken.isEmpty else {
+    guard !profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          let refreshToken = previous.refreshToken, !refreshToken.isEmpty else {
       throw GatewayError.authenticationRequired
     }
     return try exchange([

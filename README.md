@@ -333,3 +333,42 @@ kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID --
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
+
+## Common external credential environment names
+
+Ordinary requests can use externally obtained credentials without `auth login`.
+Use a product prefix: `GOOGLE_DOCS_GATEWAY_`, `GOOGLE_SHEETS_GATEWAY_`, or
+`GOOGLE_DRIVE_GATEWAY_`. The executable names for Sheets retain the existing
+`google-sheet-gateway-*` spelling.
+
+| Suffix | Value |
+| --- | --- |
+| `ACCESS_TOKEN` | Direct token string; no application client required |
+| `TOKEN_STORE_JSON` | Token-store JSON contents |
+| `TOKEN_STORE_PATH` | Credential file path (CLI/trusted profile only) |
+| `OAUTH_CLIENT_JSON` | Installed application JSON contents |
+| `OAUTH_CLIENT_PATH` | Installed application JSON file path (CLI only) |
+| `OAUTH_CLIENT_ID` | Desktop application client ID |
+
+Profile-specific inputs use `<PREFIX>CREDENTIAL_<NORMALIZED_ID>_<SUFFIX>` and
+win over product defaults. For example,
+`GOOGLE_DOCS_GATEWAY_CREDENTIAL_DOCS_READER_ACCESS_TOKEN`. Existing
+`GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_*` variables remain compatibility aliases.
+Conflicting aliases fail without printing values. Direct tokens cannot be combined
+with token-store inputs for the same profile. Raw tokens remain in memory;
+Google enforces their actual granted permissions. Token-store JSON/file inputs
+retain service, role, scope, expiry, and secure-file checks.
+
+A fresh external token store can be used without application credentials. Login
+and token refresh still require a registered OAuth application client; an expired
+token without one must be replaced. An SDK call's environment accepts direct
+tokens and inline JSON, while filesystem access continues to require a trusted,
+constructor-injected profile. The SDK never opens paths from call-scoped variables.
+
+### Deprecated package executable
+
+`google-documents-gateway` now forwards to the Docs reader command runner, including
+`auth login`, `auth status`, and ordinary Docs read operations. Use
+`google-docs-gateway-reader` directly. The compatibility executable no longer
+returns the scaffold greeting for an auth command. It retains reader capabilities
+and uses the Docs credential namespace.

@@ -1,17 +1,10 @@
 import Foundation
 import GoogleDocumentsGatewayCore
 
-let command = AppCommand(arguments: Array(CommandLine.arguments.dropFirst()))
-
-do {
-  let output = try command.run()
-  if !output.isEmpty {
-    print(output)
-  }
-} catch AppCommand.Error.unknownArgument(let argument) {
-  FileHandle.standardError.write(Data("Unknown argument: \(argument)\n".utf8))
-  exit(2)
-} catch {
-  FileHandle.standardError.write(Data("Error: \(error)\n".utf8))
-  exit(1)
-}
+FileHandle.standardError.write(Data(
+  "Deprecated: use google-docs-gateway-reader instead.\n".utf8
+))
+let result = GatewayCommandRunner(role: GatewayRole(service: .docs, accessMode: .read))
+  .run(arguments: Array(CommandLine.arguments.dropFirst()))
+if !result.stdout.isEmpty { print(result.stdout) }
+exit(result.exitCode)
