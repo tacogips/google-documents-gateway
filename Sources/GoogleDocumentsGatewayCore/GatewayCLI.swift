@@ -110,7 +110,7 @@ public struct GatewayCommandRunner: Sendable {
 
   func run(arguments: [String], inputDataOverrides: [String: Data]) -> GatewayCommandResult {
     do {
-      if arguments.isEmpty || arguments.contains("--help") || arguments.contains("-h") {
+      if arguments.isEmpty || arguments == ["auth"] || arguments.contains("--help") || arguments.contains("-h") {
         return success(["usage": usage, "service": role.service.rawValue, "role": role.accessMode.rawValue])
       }
       if arguments == ["--version"] { return success(["version": Version.current]) }
