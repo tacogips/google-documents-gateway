@@ -4,6 +4,8 @@ import Foundation
 public struct GatewayCredentialProfile: Sendable, Equatable {
   public let id: String
   public let role: GatewayRole
+  public let oauthClientKind: String
+  public let oauthRedirectURIs: [String]
   public let clientID: String
   public let clientSecret: String?
   public let tokenStoreURL: URL
@@ -18,6 +20,8 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     role: GatewayRole,
     clientID: String,
     clientSecret: String? = nil,
+    oauthClientKind: String = "installed",
+    oauthRedirectURIs: [String] = [],
     tokenStoreURL: URL,
     tokenStoreJSON: String? = nil,
     tokenStorePathFromEnvironment: Bool = false,
@@ -26,6 +30,8 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
     try GatewayCredentialProfile.validateID(id)
     self.id = id
     self.role = role
+    self.oauthClientKind = oauthClientKind
+    self.oauthRedirectURIs = oauthRedirectURIs
     self.clientID = clientID
     self.clientSecret = clientSecret
     self.tokenStoreURL = tokenStoreURL
@@ -67,7 +73,7 @@ public enum GatewayCredentialProfileLoader {
       environment: environment
     ).path
     let installedClient = try loadInstalledClient(json: environment[secretJSONKey], path: environment[secretPathKey])
-    let clientID = installedClient?.clientID ?? nonBlank(environment[clientKey]) ?? ""
+    let clientID = installedClient?.client.clientID ?? nonBlank(environment[clientKey]) ?? ""
     guard !clientID.isEmpty || tokenJSON != nil || pathOverride != nil || FileManager.default.fileExists(atPath: tokenPath) else {
       throw GatewayError.authenticationRequired
     }
@@ -75,7 +81,9 @@ public enum GatewayCredentialProfileLoader {
       id: id,
       role: role,
       clientID: clientID,
-      clientSecret: installedClient?.clientSecret,
+      clientSecret: installedClient?.client.clientSecret,
+      oauthClientKind: installedClient?.kind ?? "installed",
+      oauthRedirectURIs: installedClient?.client.redirectURIs ?? [],
       tokenStoreURL: URL(fileURLWithPath: tokenPath),
       tokenStoreJSON: tokenJSON,
       tokenStorePathFromEnvironment: pathOverride != nil,
@@ -90,7 +98,7 @@ public enum GatewayCredentialProfileLoader {
     return value
   }
 
-  private static func loadInstalledClient(json: String?, path: String?) throws -> InstalledClient? {
+  private static func loadInstalledClient(json: String?, path: String?) throws -> (client: InstalledClient, kind: String)? {
     let data: Data?
     if let json, !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       data = Data(json.utf8)
@@ -100,13 +108,15 @@ public enum GatewayCredentialProfileLoader {
       data = nil
     }
     guard let data else { return nil }
-    guard
-      let client = try JSONDecoder().decode(InstalledClientFile.self, from: data).installed,
+    let root = try JSONDecoder().decode(InstalledClientFile.self, from: data)
+    guard (root.installed == nil) != (root.web == nil),
+      let client = root.installed ?? root.web,
       !client.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else {
       throw GatewayError.invalidArgument("OAuth client JSON must contain an installed Desktop client")
     }
-    return client
+    if root.web != nil, client.clientSecret?.isEmpty != false { throw GatewayError.invalidArgument("Web OAuth client requires a client secret") }
+    return (client, root.web == nil ? "installed" : "web")
   }
 
   /// Tokens are auth state, not configuration: the default lives under
@@ -140,15 +150,18 @@ public enum GatewayCredentialProfileLoader {
 
 private struct InstalledClientFile: Decodable {
   let installed: InstalledClient?
+  let web: InstalledClient?
 }
 
 private struct InstalledClient: Decodable {
   let clientID: String
   let clientSecret: String?
+  let redirectURIs: [String]?
 
   private enum CodingKeys: String, CodingKey {
     case clientID = "client_id"
     case clientSecret = "client_secret"
+    case redirectURIs = "redirect_uris"
   }
 }
 

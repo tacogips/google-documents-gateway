@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import Network
+import GoogleGatewayAuth
 
 public struct GatewayLoopbackOAuth: Sendable {
   public let profile: GatewayCredentialProfile
@@ -12,14 +12,25 @@ public struct GatewayLoopbackOAuth: Sendable {
   }
 
   public func login(timeout: TimeInterval = 180, openBrowser: Bool = true) throws -> GatewayTokenStore {
+    do { return try performLogin(timeout: timeout, openBrowser: openBrowser) }
+    catch let error as GatewayAuthError {
+      if error.kind == .configuration { throw GatewayError.invalidArgument(error.description) }
+      throw GatewayError.transportFailure(error.description)
+    }
+  }
+
+  private func performLogin(timeout: TimeInterval, openBrowser: Bool) throws -> GatewayTokenStore {
     guard !profile.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GatewayError.authenticationRequired }
-    let callback = LoopbackCallback()
-    let port = try callback.start(timeout: min(timeout, 10))
-    defer { callback.cancel() }
+    let prefix = "GOOGLE_" + profile.role.service.rawValue.uppercased() + "_GATEWAY_"
+    let settings = try OAuthCallbackSettings(prefix: prefix, defaultPath: "/callback",
+      requestedURI: profile.oauthClientKind == "web" && !OAuthCallbackSettings.isConfigured(prefix: prefix)
+        ? profile.oauthRedirectURIs.first : nil)
+    let callback = try OAuthCallbackServer(settings: settings)
 
     let state = Self.randomURLSafe(byteCount: 32)
     let verifier = Self.randomURLSafe(byteCount: 64)
-    let redirectURI = "http://127.0.0.1:\(port)/callback"
+    let redirectURI = callback.redirectURI.absoluteString
+    try OAuthCallbackSettings.validateClientRedirect(kind: profile.oauthClientKind, registered: profile.oauthRedirectURIs, redirect: redirectURI)
     let authorizationURL = try GatewayOAuthPKCE.authorizationURL(
       profile: profile,
       redirectURI: redirectURI,
@@ -27,7 +38,7 @@ public struct GatewayLoopbackOAuth: Sendable {
       verifier: verifier
     )
     try GatewayAuthorizationPresenter.live.present(authorizationURL, openBrowser: openBrowser)
-    let result = try callback.wait(timeout: timeout)
+    let result = try callback.wait(expectedState: state, timeout: timeout)
     guard result.state == state else { throw GatewayError.authenticationRequired }
     guard result.error == nil, let code = result.code, !code.isEmpty else {
       throw GatewayError.authenticationRequired
@@ -65,99 +76,4 @@ struct GatewayAuthorizationPresenter: Sendable {
       FileHandle.standardError.write(Data(message.utf8))
     }
   )
-}
-
-private struct LoopbackResult: Sendable {
-  let code: String?
-  let state: String?
-  let error: String?
-}
-
-private final class LoopbackCallback: @unchecked Sendable {
-  private let queue = DispatchQueue(label: "google-documents-gateway.oauth-loopback")
-  private let ready = DispatchSemaphore(value: 0)
-  private let completed = DispatchSemaphore(value: 0)
-  private let lock = NSLock()
-  private var listener: NWListener?
-  private var port: UInt16?
-  private var startupError: Error?
-  private var result: LoopbackResult?
-
-  func start(timeout: TimeInterval) throws -> UInt16 {
-    let listener = try NWListener(using: .tcp, on: .any)
-    self.listener = listener
-    listener.stateUpdateHandler = { [weak self] state in
-      guard let self else { return }
-      switch state {
-      case .ready:
-        lock.lock()
-        port = listener.port?.rawValue
-        lock.unlock()
-        ready.signal()
-      case .failed(let error):
-        lock.lock()
-        startupError = error
-        lock.unlock()
-        ready.signal()
-      default:
-        break
-      }
-    }
-    listener.newConnectionHandler = { [weak self] connection in self?.receive(connection) }
-    listener.start(queue: queue)
-    guard ready.wait(timeout: .now() + timeout) == .success else {
-      throw GatewayError.transportFailure("OAuth loopback listener timed out")
-    }
-    lock.lock()
-    defer { lock.unlock() }
-    if startupError != nil { throw GatewayError.transportFailure("OAuth loopback listener failed") }
-    guard let port else { throw GatewayError.transportFailure("OAuth loopback listener did not bind a port") }
-    return port
-  }
-
-  func wait(timeout: TimeInterval) throws -> LoopbackResult {
-    guard completed.wait(timeout: .now() + timeout) == .success else {
-      throw GatewayError.transportFailure("OAuth login timed out")
-    }
-    lock.lock()
-    defer { lock.unlock() }
-    guard let result else { throw GatewayError.authenticationRequired }
-    return result
-  }
-
-  func cancel() {
-    listener?.cancel()
-  }
-
-  private func receive(_ connection: NWConnection) {
-    connection.start(queue: queue)
-    connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, _, _ in
-      guard let self else { return }
-      let parsed = data.flatMap(Self.parseRequest)
-      let body = parsed?.error == nil && parsed?.code != nil
-        ? "Authorization received. You can close this window."
-        : "Authorization failed. Return to the terminal."
-      let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
-      connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
-      lock.lock()
-      if result == nil { result = parsed }
-      lock.unlock()
-      completed.signal()
-    }
-  }
-
-  private static func parseRequest(_ data: Data) -> LoopbackResult? {
-    guard
-      let request = String(data: data, encoding: .utf8),
-      let firstLine = request.split(separator: "\n", maxSplits: 1).first,
-      firstLine.hasPrefix("GET "),
-      let target = firstLine.split(separator: " ").dropFirst().first,
-      let components = URLComponents(string: "http://127.0.0.1\(target)"),
-      components.path == "/callback"
-    else { return nil }
-    let values = (components.queryItems ?? []).reduce(into: [String: String]()) { values, item in
-      values[item.name] = item.value ?? ""
-    }
-    return LoopbackResult(code: values["code"], state: values["state"], error: values["error"])
-  }
 }

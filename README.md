@@ -397,3 +397,25 @@ client, preserving explicit OAuth client environment overrides. A successful
 native login clears a previous gcloud provider selection. Client registration
 is separate from project creation and API enablement. This change does not
 claim that client registration or real authorization is complete.
+
+## Callback configuration and Web OAuth
+
+Use the product prefix (`GOOGLE_DOCS_GATEWAY_, GOOGLE_SHEETS_GATEWAY_, GOOGLE_DRIVE_GATEWAY_`) with the same suffixes:
+
+| Suffix | Value |
+| --- | --- |
+| `OAUTH_REDIRECT_URI` | Public HTTPS callback URL, or HTTP loopback URL |
+| `OAUTH_LISTEN_HOST` | Local listener address; defaults to `127.0.0.1` |
+| `OAUTH_LISTEN_PORT` | Local listener port; `0` chooses an available port |
+
+Desktop clients require HTTP loopback redirects. Web clients support public
+HTTPS redirects and require an exact match to a registered URI in their client
+JSON. Put an HTTPS reverse proxy in front of the HTTP listener, forwarding the
+callback path unchanged. The listener stops when the login flow ends.
+
+Service gateway's `clients register --file /absolute/client.json --product
+PRODUCT [--redirect-uri URI] [--listen-host ADDRESS] [--listen-port PORT]
+[--replace]` imports an existing registered Google client and callback settings
+for the selected product. This is local configuration, not Google-side OAuth
+client creation. Environment values override stored callback settings.
+External access tokens and token JSON/path inputs remain supported.
