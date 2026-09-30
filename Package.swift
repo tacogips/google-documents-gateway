@@ -18,6 +18,7 @@ let package = Package(
     .executable(name: "google-drive-gateway-writer", targets: ["GoogleDriveGatewayWriter"])
   ],
   dependencies: [
+    .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "dda86daa5ca1b9a761977e4a9891e4e4380cf4dd"),
     .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")
   ],
   targets: [
@@ -27,14 +28,14 @@ let package = Package(
     ),
     .executableTarget(
       name: "GoogleDocumentsGatewayCLI",
-      dependencies: ["GoogleDocumentsGatewayCore"]
+      dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]
     ),
-    .executableTarget(name: "GoogleDocsGatewayReader", dependencies: ["GoogleDocumentsGatewayCore"]),
-    .executableTarget(name: "GoogleDocsGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
-    .executableTarget(name: "GoogleSheetGatewayReader", dependencies: ["GoogleDocumentsGatewayCore"]),
-    .executableTarget(name: "GoogleSheetGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
-    .executableTarget(name: "GoogleDriveGatewayReader", dependencies: ["GoogleDocumentsGatewayCore"]),
-    .executableTarget(name: "GoogleDriveGatewayWriter", dependencies: ["GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDocsGatewayReader", dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDocsGatewayWriter", dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleSheetGatewayReader", dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleSheetGatewayWriter", dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDriveGatewayReader", dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]),
+    .executableTarget(name: "GoogleDriveGatewayWriter", dependencies: [.product(name: "GoogleGatewayAuth", package: "google-gateway-auth"), "GoogleDocumentsGatewayCore"]),
     .testTarget(
       name: "GoogleDocumentsGatewayCoreTests",
       dependencies: ["GoogleDocumentsGatewayCore", .product(name: "GatewaySDKKit", package: "gateway-sdk-kit")]

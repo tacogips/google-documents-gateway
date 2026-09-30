@@ -1,6 +1,9 @@
+import GoogleGatewayAuth
 import Foundation
 import GoogleDocumentsGatewayCore
 
-let result = GatewayCommandRunner(role: GatewayRole(service: .docs, accessMode: .write)).run(arguments: Array(CommandLine.arguments.dropFirst()))
+let gatewayInvocation = GatewayAuthBootstrap.prepareOrExit(product: .docs, role: "writer")
+
+let result = GatewayCommandRunner(role: GatewayRole(service: .docs, accessMode: .write), environment: gatewayInvocation.environment).run(arguments: gatewayInvocation.arguments)
 print(result.stdout)
-exit(result.exitCode)
+exit(gatewayInvocation.complete(exitCode: result.exitCode))
