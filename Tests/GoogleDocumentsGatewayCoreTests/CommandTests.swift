@@ -44,7 +44,7 @@ import Testing
   // proving the success above came from the injected environment.
   let bare = GatewayCommandRunner(
     role: GatewayRole(service: .docs, accessMode: .read),
-    environment: [:]
+    environment: isolatedCredentialTestEnvironment()
   )
   #expect(bare.run(arguments: ["config", "validate"]).exitCode != 0)
 }

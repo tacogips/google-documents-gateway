@@ -75,10 +75,13 @@ import Testing
 }
 
 @Test func defaultAuthorizerDoesNotUseEnvironmentAccessToken() {
-  let runner = GatewayCommandRunner(role: GatewayRole(service: .docs, accessMode: .read))
+  let transport = FixtureTransport()
+  let runner = GatewayCommandRunner(role: GatewayRole(service: .docs, accessMode: .read), transport: transport,
+                                    environment: isolatedCredentialTestEnvironment())
   let result = runner.run(arguments: ["document", "get", "--document-id", "d"])
   #expect(result.exitCode == 4)
   #expect(result.stdout.contains("AUTH_REQUIRED"))
+  #expect(transport.calls == 0)
 }
 
 private struct FixtureAuthorizer: GatewayAuthorizing {

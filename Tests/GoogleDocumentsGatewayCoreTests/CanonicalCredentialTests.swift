@@ -22,7 +22,7 @@ import Testing
 @Test func productTokensDoNotCrossDocumentServices() throws {
   let docs = GatewayRole(service: .docs, accessMode: .read)
   #expect(throws: GatewayError.self) {
-    _ = try GatewayCredentialProfileLoader.load(role: docs, environment: ["GOOGLE_DRIVE_GATEWAY_ACCESS_TOKEN": "drive-token"])
+    _ = try GatewayCredentialProfileLoader.load(role: docs, environment: isolatedCredentialTestEnvironment().merging(["GOOGLE_DRIVE_GATEWAY_ACCESS_TOKEN": "drive-token"]) { _, value in value })
   }
 }
 
