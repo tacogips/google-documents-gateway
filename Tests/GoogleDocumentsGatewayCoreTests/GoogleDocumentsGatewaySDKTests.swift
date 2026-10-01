@@ -156,6 +156,8 @@ import Testing
   let transport = SDKFixtureTransport()
   let sdk = GoogleDocumentsGatewaySDK(role: .init(service: .sheets, accessMode: .write), authorizer: authorizer, transport: transport, fileAccessPolicy: .init(inputRoots: [root]))
   let credentialCommands = [
+    ["auth logout"],
+    ["auth", "logout"],
     ["auth login"],
     ["auth", "login"],
     ["auth revoke", "--credential", "fixture", "--confirm-credential", "fixture"],

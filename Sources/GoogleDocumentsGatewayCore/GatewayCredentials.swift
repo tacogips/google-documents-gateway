@@ -54,7 +54,7 @@ public struct GatewayCredentialProfile: Sendable, Equatable {
 }
 
 public enum GatewayCredentialProfileLoader {
-  public static func load(role: GatewayRole, credentialID: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment) throws -> GatewayCredentialProfile {
+  public static func load(role: GatewayRole, credentialID: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment, allowMissingClient: Bool = false) throws -> GatewayCredentialProfile {
     let id = credentialID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? credentialID! : role.identifier
     try GatewayCredentialProfile.validateID(id)
     let environment = try gatewayCredentialEnvironment(role: role, id: id, source: environment)
@@ -74,7 +74,7 @@ public enum GatewayCredentialProfileLoader {
     ).path
     let installedClient = try loadInstalledClient(json: environment[secretJSONKey], path: environment[secretPathKey])
     let clientID = installedClient?.client.clientID ?? nonBlank(environment[clientKey]) ?? ""
-    guard !clientID.isEmpty || tokenJSON != nil || pathOverride != nil || FileManager.default.fileExists(atPath: tokenPath) else {
+    guard allowMissingClient || !clientID.isEmpty || tokenJSON != nil || pathOverride != nil || FileManager.default.fileExists(atPath: tokenPath) else {
       throw GatewayError.authenticationRequired
     }
     return try GatewayCredentialProfile(

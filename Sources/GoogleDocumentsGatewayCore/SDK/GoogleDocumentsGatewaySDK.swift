@@ -681,7 +681,7 @@ public struct GoogleDocumentsGatewaySDK: GatewaySDK {
       throw GatewayError.forbiddenCommand("Help must be requested as a standalone SDK argv request")
     }
     let command = try rawCommand(in: arguments)
-    guard command.name != "auth login", command.name != "auth revoke" else {
+    guard command.name != "auth login", command.name != "auth logout", command.name != "auth revoke" else {
       throw GatewayError.forbiddenCommand("Credential login and revocation are not available through the SDK.")
     }
     guard command.name != "operation run" else {

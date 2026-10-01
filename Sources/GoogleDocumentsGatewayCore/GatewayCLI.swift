@@ -1,4 +1,5 @@
 import Foundation
+import GoogleGatewayAuth
 
 public struct GatewayCommandResult: Sendable {
   public let stdout: String
@@ -126,7 +127,7 @@ public struct GatewayCommandRunner: Sendable {
       if command == "auth status" || command == "doctor" {
         return try diagnosticResult(command: command, options: parsed.options)
       }
-      if command == "auth login" || command == "auth revoke" {
+      if ["auth login", "auth logout", "auth revoke"].contains(command) {
         return try authenticationResult(command: command, options: parsed.options)
       }
       guard allowedCommands.contains(command) else {
@@ -242,7 +243,8 @@ public struct GatewayCommandRunner: Sendable {
   }
 
   private var usage: String {
-    let common = "config validate | auth login --credential ID [--open-browser true|false] [--timeout-seconds N] | auth status --credential ID | auth revoke --credential ID --confirm-credential ID | doctor"
+    let common = "config validate | auth login --credential ID [--open-browser true|false] [--timeout-seconds N]"
+      + " | auth status --credential ID | auth logout [--credential ID] | auth revoke --credential ID --confirm-credential ID | doctor"
     let sdk = "schema print | schema search <regex> [--kinds k1,k2] [--include-referenced-types] [--limit N] | operation run <name> --variables JSON|--variables-file PATH"
     let readable = readableUsage.map { "\nReadable writes: \($0)" } ?? ""
     return [
@@ -767,7 +769,20 @@ private extension GatewayCommandRunner {
     }
     let credential = options["credential"]?.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? role.identifier
     guard !credential.isEmpty else { throw GatewayError.invalidArgument("Missing required --credential") }
-    let profile = try resolvedProfile(credential)
+    let profile = try resolvedProfile(credential, allowMissingClient: command == "auth logout")
+    if command == "auth logout" {
+      let external = profile.tokenStoreJSON != nil || profile.tokenStorePathFromEnvironment
+      let result = try GatewayLogout.perform(externalCredential: external) {
+        try GatewayTokenStoreFile.completeLegacyMigration(profile: profile)
+        let exists: Bool
+        do { _ = try GatewaySecureTokenFilesystem.read(profile.tokenStoreURL); exists = true } catch let error as POSIXError where error.code == .ENOENT { exists = false }
+        try GatewayTokenStoreFile.revoke(url: profile.tokenStoreURL)
+        return exists
+      }
+      return success(["operation": command, "credential": credential, "state": result.state,
+                      "localTokenDeleted": result.localTokenDeleted,
+                      "externalCredentialPreserved": result.externalCredentialPreserved])
+    }
     if command == "auth revoke" {
       guard options["confirm-credential"]?.last == credential else { throw GatewayError.invalidArgument("--confirm-credential must exactly match --credential") }
       let store = try? tokenStore(profile: profile)
@@ -833,7 +848,7 @@ private extension GatewayCommandRunner {
     return profile.tokenSourceMessage(message)
   }
 
-  private func resolvedProfile(_ credential: String) throws -> GatewayCredentialProfile {
+  private func resolvedProfile(_ credential: String, allowMissingClient: Bool = false) throws -> GatewayCredentialProfile {
     if let credentialProfile {
       guard credentialProfile.id == credential, credentialProfile.role == role else { throw GatewayError.scopeMismatch }
       return credentialProfile
@@ -846,7 +861,7 @@ private extension GatewayCommandRunner {
         cancellation: cancellation
       )
     }
-    return try GatewayCredentialProfileLoader.load(role: role, credentialID: credential, environment: environment)
+    return try GatewayCredentialProfileLoader.load(role: role, credentialID: credential, environment: environment, allowMissingClient: allowMissingClient)
   }
 
   private func tokenStore(profile: GatewayCredentialProfile) throws -> GatewayTokenStore {
