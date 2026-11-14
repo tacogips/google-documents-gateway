@@ -1,0 +1,335 @@
+# google-documents-gateway
+
+Credential token selection prefers `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ID>_TOKEN_STORE_JSON`
+over `TOKEN_STORE_PATH` and the default token file. Inline JSON is immutable;
+unset the exact variable before login. Login and auth status report `tokenSource`,
+the selected file path, and `tokenSourceHint` for subsequent commands. Authentication
+and scope errors identify the override that selected the failing token without
+printing credential values.
+
+A Swift command line tool
+
+## Google document gateways
+
+The package exposes six fixed-role executables. A reader never includes a
+mutation command, and a writer never includes a reader command. The exact
+required scopes are deliberately separate:
+
+- `google-docs-gateway-reader`: `documents.readonly`; writer: `documents`
+- `google-sheet-gateway-reader`: `spreadsheets.readonly`; writer: `spreadsheets`
+- `google-drive-gateway-reader`: `drive.readonly`; writer: `drive.file`
+
+Use `--help` on an individual executable to view only its allowed surface.
+All commands write one structured JSON document. `--dry-run` validates a
+supported mutation and shows its redacted request plan without loading a token
+or calling a transport. Remote commands fail closed until a role-specific
+Desktop OAuth profile is configured and its actual grant has been inspected.
+Never pass client secrets, authorization codes, access tokens, or refresh tokens
+as command-line arguments.
+
+```bash
+swift run google-docs-gateway-reader --help
+swift run google-sheet-gateway-writer values clear --spreadsheet-id ID --range 'Sheet1!A1' --dry-run
+swift run google-drive-gateway-writer --help
+mise run gateway:help
+```
+
+### OAuth setup
+
+Enable the Google Docs, Sheets, and Drive APIs in the Google Cloud project and
+use an OAuth client whose application type is Desktop. The same Desktop client
+JSON can bootstrap all six roles, but every role performs a separate consent
+flow and stores a separate token with exactly one API scope.
+
+The kinko keys are:
+
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_WRITER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_READER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_WRITER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON`
+- `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_SECRET_JSON`
+
+After login, the matching token can also be supplied without a filesystem
+credential through `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_JSON`, for
+example `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_TOKEN_STORE_JSON`. Environment
+JSON takes precedence over `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH`,
+matching `mail-gateway`. An expired environment token is refreshed in memory;
+the caller remains responsible for replacing its kinko value.
+
+The reusable Desktop OAuth client JSON from the sibling `mail-gateway` vault
+has been copied into these google-documents-gateway-local keys. Gmail token values were
+not copied because Gmail grants do not satisfy any google-documents-gateway role.
+
+Run each login through kinko. Login opens the browser, acquires the Google OAuth
+token through PKCE, and accepts the callback only on a temporary `127.0.0.1`
+listener; authorization codes and PKCE values are never accepted as command
+arguments. To open the URL manually in a browser on the same Mac, add
+`--open-browser false`; the gateway prints the authorization URL to standard
+error while the loopback callback listener waits for completion.
+
+```bash
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_READER_OAUTH_CLIENT_SECRET_JSON -- \
+  swift run google-docs-gateway-reader auth login
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DOCS_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
+  swift run google-docs-gateway-writer auth login
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_READER_OAUTH_CLIENT_SECRET_JSON -- \
+  swift run google-sheet-gateway-reader auth login
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_SHEETS_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
+  swift run google-sheet-gateway-writer auth login
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_READER_OAUTH_CLIENT_SECRET_JSON -- \
+  swift run google-drive-gateway-reader auth login
+kinko exec --env GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DRIVE_WRITER_OAUTH_CLIENT_SECRET_JSON -- \
+  swift run google-drive-gateway-writer auth login
+```
+
+Tokens default to
+`${XDG_STATE_HOME:-~/.local/state}/google-documents-gateway/credentials/<role>.json`
+(auth state, deliberately outside `~/.config`) and are written atomically with
+mode `0600`. Relocate the whole directory with
+`GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_DIR`, or override one file with the
+matching `GOOGLE_DOCUMENTS_GATEWAY_CREDENTIAL_<ROLE>_TOKEN_STORE_PATH`
+variable (the per-file variable wins). The first file-backed use of an
+unconfigured default safely migrates its former synthesized location,
+`${XDG_CONFIG_HOME:-~/.config}/google-documents-gateway/tokens/<role>.json`,
+only when no state token exists; explicit paths, credential directories, and
+kinko JSON are never migrated. The managed credential directories use mode
+`0700`; token reads reject symbolic links and hard-linked/non-regular files.
+The legacy file remains an untouched recovery copy; a durable
+`.migration-complete` marker makes it ineligible after migration, revoke, or a
+successful new login. Keep that marker while retaining the recovery copy so a
+revoked token cannot return after restart. Empty or relative `XDG_STATE_HOME`
+and `XDG_CONFIG_HOME` values are ignored. `doctor`,
+`auth status`, and `auth revoke --confirm-credential <role>` never print token
+or client-secret values.
+
+### Operations
+
+- Docs reader: `document get`
+- Docs writer: `document create`, `document batch-update`
+- Sheets reader: spreadsheet get/get-by-data-filter, value get/batch-get and
+  data-filter variants, and developer-metadata get/search
+- Sheets writer: spreadsheet create/structural batch-update, sheet copy, and all
+  value append/update/clear/batch/data-filter mutation methods
+- Drive reader: account quota, changes, shared drives, file metadata/content,
+  permissions, comments, replies, and revisions
+- Drive writer: folders, upload/copy/replace/rename/move/trash, permissions,
+  comments, replies, and revision flags
+
+The Docs gateway covers every stable `documents` method and validates every
+currently published Docs batch-update request discriminator. The Sheets gateway
+covers all 17 stable methods under `spreadsheets`, `values`,
+`developerMetadata`, and `sheets.copyTo`, plus every published structural
+batch-update discriminator. See `design-docs/specs/api-coverage.md` for the
+audited command matrix and intentional Drive exclusions.
+
+Drive list operations support bounded `--page-all --max-pages N` aggregation.
+Downloads and exports require `--max-bytes` and refuse to overwrite an existing
+file unless `--overwrite` is present. Resumable uploads use bounded chunks and
+require an explicit `--max-bytes` ceiling up to 64 MiB; they accept session URLs
+only from approved HTTPS Google hosts. Mutations of existing
+files or permissions require exact ID confirmation and observed-state
+preconditions. Broad domain or public sharing also requires
+`--acknowledge-broad-access`.
+
+Drive writer access uses `drive.file`, so it cannot assume visibility of
+arbitrary pre-existing files. All successful results and errors are structured
+JSON; provider response fields are preserved rather than narrowed to an
+incomplete local model.
+
+### Readable write inputs
+
+Common writes accept bounded flags so callers do not need to hand-author a
+provider body. The advanced raw body paths remain available where shown.
+
+```bash
+# Docs: use raw JSON/file only for rich or index-sensitive changes.
+swift run google-docs-gateway-writer document create --title 'Project notes'
+swift run google-docs-gateway-writer document batch-update --document-id ID --text $'First line\nSecond line'
+
+# Sheets: --values is one comma-split row; it has no quote or escape grammar.
+swift run google-sheet-gateway-writer values update --spreadsheet-id ID --range 'Sheet1!A1' --values 'one,two,'
+swift run google-sheet-gateway-writer values append --spreadsheet-id ID --range 'Sheet1!A1' --json-values '[1,true,null]'
+swift run google-sheet-gateway-writer values update --spreadsheet-id ID --range 'Sheet1!A1' --input-file value-range.json
+
+# Drive: metadata comes from the path unless an explicit bounded override is needed.
+swift run google-drive-gateway-writer folders create --name Reports --parent-id PARENT_ID
+swift run google-drive-gateway-writer files upload --input report.csv --max-bytes 1048576
+swift run google-drive-gateway-writer files upload --input report.csv --max-bytes 1048576 --name export.csv --mime-type text/csv
+```
+
+`--json-values` accepts one JSON row or multiple rows. Its cells may be
+strings, finite numbers, booleans, or `null`; use it for commas, typed values,
+or multiple rows. `--value-input-option` still defaults to `RAW`; choose
+`USER_ENTERED` explicitly to enable Sheets formula interpretation. Drive MIME
+types are resolved from an explicit valid media type, otherwise a
+case-insensitive extension mapping, and finally `application/octet-stream`.
+Drive never sniffs file bytes.
+
+For a direct option value that begins with `--`, use the unambiguous
+`--option=value` form, such as `--text=--heading` or `--values=--pending`.
+
+## SDK and command schema
+
+`GoogleDocumentsGatewaySDK` provides a role-scoped `GatewaySDKKit` catalog for
+external adapters. The catalog is defense in depth; the existing command runner
+remains authoritative for tier enforcement and returns `FORBIDDEN_COMMAND` for
+a recognized command outside the selected role. Interactive `auth login` and
+`auth revoke` are intentionally absent. Schema reads are offline and neither
+authorize nor contact Google.
+
+```swift
+import GatewaySDKKit
+import GoogleDocumentsGatewayCore
+
+let sdk = GoogleDocumentsGatewaySDK(role: .init(service: .sheets, accessMode: .read))
+let result = await sdk.invoke(.init(
+  operation: "values get",
+  variables: ["spreadsheet-id": .string("sheet-id"), "range": .string("Sheet1!A1"), "dry-run": .bool(true)]
+))
+print(result.exitCode)
+```
+
+Use `execute(document:variables:environment:)` with a JSON argv array for
+policy-controlled raw execution, for example `["values","get","--spreadsheet-id","sheet-id","--range","Sheet1!A1","--dry-run"]`.
+Raw documents are capped at 2 MiB, 16,384 argv elements, and 64 KiB per UTF-8 argv token.
+Standalone `--help`/`-h` and `--version` remain available; embedded help and
+`auth login`/`auth revoke` are rejected. Catalog file arguments (`input`,
+`input-file`, and `json-file`) must be bounded single-link regular files and are copied to
+private snapshots before runner dispatch, so raw execution is not a verbatim
+argv passthrough for those inputs.
+
+SDK catalog variables have a 2 MiB encoded-source and aggregate-argv budget,
+with at most 16,384 JSON nodes (including the outer variables object) and
+128 levels of nesting; each emitted argv token remains limited to 64 KiB.
+Final non-upload provider request bodies are capped at 2 MiB. SDK executions
+default to a 30-second deadline and retain at most 8 MiB of each provider
+response or `--page-all` aggregate. Response parsing checks cancellation and caps JSON nesting
+at 128 levels and structural values at 16,384; `GatewaySDKExecutionPolicy` clamps response
+budgets to 1...64 MiB and deadlines to 0.01...600 seconds.
+Concurrency is normalized to 1...64 active workers with at most 256 queued calls per facade.
+If a private output-staging artifact cannot be unlinked after a failed write, the policy returns
+its recovery path and retains it for targeted retry. Keep the policy and SDK instances that
+reported a recovery, enumerate their pending collections, and retry only the stable recovery ID:
+
+```swift
+for recovery in policy.pendingOutputCleanupRecoveries {
+  _ = policy.retryPendingOutputCleanup(recoveryID: recovery.id)
+}
+for recovery in sdk.pendingSnapshotCleanupRecoveries {
+  _ = sdk.retryPendingSnapshotCleanup(recoveryID: recovery.id)
+}
+```
+
+An SDK call's `environment` is inline-only credential data: use the role's
+`*_OAUTH_CLIENT_SECRET_JSON`, `*_OAUTH_CLIENT_ID`, and `*_TOKEN_STORE_JSON`
+variables. Credential path variables, including `*_OAUTH_CLIENT_SECRET_PATH`,
+`*_TOKEN_STORE_PATH`, and credential-directory settings, are ignored by SDK
+calls. A host-controlled file-backed credential profile must instead be passed
+through the SDK constructor's `credentialProfile` parameter.
+Bounded SDK calls read that profile's current token path directly; legacy
+default-token migration remains a standalone CLI lifecycle operation.
+
+After a remotely mutating or non-idempotent request crosses the provider
+dispatch boundary, any later timeout, cancellation, transport, response-limit,
+status, or decoding failure is non-retryable `OUTCOME_UNKNOWN` (exit 5).
+Response arrival alone does not make a retry safe.
+SDK filesystem access is default-deny: pass `GatewaySDKFileAccessPolicy` with
+explicit input and output directory roots for catalog file inputs or Drive
+downloads/exports; overwrite targets must be single-link regular files. Injected
+SDK transports must conform to `GatewayResponseByteLimitedHTTPTransport`, enforcing the supplied
+deadline, cancellation token, and receive-time response-byte limit. SDK calls are deadline-bounded and respect task cancellation;
+the standalone CLI retains its normal local filesystem behavior.
+The CLI exposes the same role-local catalog:
+
+```bash
+swift run google-sheet-gateway-reader schema print
+swift run google-sheet-gateway-reader schema search 'values get' --kinds command
+swift run google-sheet-gateway-reader operation run values get --variables '{"spreadsheet-id":"sheet-id","range":"Sheet1!A1","dry-run":true}'
+```
+
+This repository adds no Cursor adapter. External adapters consume the public
+SDK facade only. The package pins `GatewaySDKKit` 0.1.0 from its public Git
+URL; Riela integration is a separate work package.
+
+## Development
+
+```bash
+mise install
+mise run build
+mise run test
+swift run google-documents-gateway --help
+```
+
+The package uses Swift Package Manager with:
+
+- Library target: `GoogleDocumentsGatewayCore`
+- Executable target: `GoogleDocumentsGatewayCLI`
+- Installed executable: `google-documents-gateway`
+
+Swift target names and type names must be valid Swift identifiers. If the project
+name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
+needed, but use identifier-safe values for Swift module/type variables. The
+module names are project-qualified rather than generic (`AppCore`, `AppCLI`)
+because a host that links several of these gateways as libraries needs every
+target name in the package graph to be unique.
+
+## Homebrew Formula
+
+Build local formula archives:
+
+```bash
+mise run build:homebrew -- darwin-arm64 darwin-x64
+```
+
+Render a formula after both platform archives exist:
+
+```bash
+mise run homebrew:formula -- 0.1.0
+```
+
+Render directly into the default sibling tap checkout:
+
+```bash
+mise run homebrew:tap-formula -- 0.1.0
+```
+
+Install from the tap after the formula is published:
+
+```bash
+brew tap tacogips/tap
+brew install google-documents-gateway
+```
+
+## Homebrew Cask
+
+The Cask workflow builds signed, notarized, and stapled macOS DMG artifacts.
+Apple signing credentials must stay local and must not be committed.
+
+Check the build plan:
+
+```bash
+mise run build:homebrew-cask -- --dry-run darwin-arm64 darwin-x64
+```
+
+Build with local signing credentials:
+
+```bash
+kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
+  mise run build:homebrew-cask -- darwin-arm64 darwin-x64
+```
+
+Render a Cask:
+
+```bash
+mise run homebrew:cask -- 0.1.0
+```
+
+For a tagged release, build, upload, and render the tap Cask:
+
+```bash
+kinko exec --env APPLE_SIGNING_IDENTITY,APPLE_ID,APPLE_PASSWORD,APPLE_TEAM_ID -- \
+  mise run release:homebrew-cask-local -- v0.1.0
+```
+
+See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
