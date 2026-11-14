@@ -1,0 +1,985 @@
+import Foundation
+import GoogleGatewayAuth
+
+public struct GatewayCommandResult: Sendable {
+  public let stdout: String
+  public let exitCode: Int32
+}
+
+private struct GatewayDispatchTrackingTransport: GatewayHTTPTransport {
+  let base: GatewayHTTPTransport
+  let remoteDispatch: GatewaySDKRemoteDispatch
+
+  func send(
+    url: URL, method: String, headers: [String: String], body: Data?
+  ) throws -> GatewayHTTPResponse {
+    _ = remoteDispatch.beginRequest()
+    return try base.send(url: url, method: method, headers: headers, body: body)
+  }
+}
+
+public struct GatewayCommandRunner: Sendable {
+  public let role: GatewayRole
+  public let authorizer: GatewayAuthorizing
+  public let transport: GatewayHTTPTransport
+  public let credentialProfile: GatewayCredentialProfile?
+  /// Where credential variables are read from. Defaults to the process
+  /// environment. A host that links this package as a library passes one
+  /// call's environment directly instead of writing credentials into its own
+  /// process environment, which is unsafe with concurrent calls.
+  public let environment: [String: String]
+  /// SDK callers may replace this with a root-scoped, descriptor-relative writer.
+  /// The command-line executable keeps the historical local writer.
+  public let outputWriter: GatewayOutputWriter
+  /// Non-nil only for bounded SDK execution. Direct command-line execution
+  /// retains the long-standing synchronous authorization contract.
+  public let cancellation: GatewaySDKCancellation?
+  let remoteDispatch: GatewaySDKRemoteDispatch?
+  private let credentialDecoder: GatewaySDKCredentialDecoder
+  /// SDK bounded execution supplies a finite aggregate response budget. Direct runner and CLI
+  /// calls retain their established provider-body and page-all compatibility behavior.
+  private let maximumAggregateResponseBytes: Int?
+  private let pageAllAccumulationObserver: @Sendable () -> Void
+  private let requestJSONStructuralValidationObserver: @Sendable () -> Void
+  private let requestJSONDecoder: GatewayProviderJSONDecoder
+  /// Private, bounded snapshot bytes supplied by the SDK. These take precedence over an argv
+  /// pathname so a post-capture pathname replacement cannot alter a provider request.
+  private let inputDataOverrides: [String: Data]
+
+  public init(
+    role: GatewayRole,
+    authorizer: GatewayAuthorizing? = nil,
+    transport: GatewayHTTPTransport = URLSessionGatewayTransport(),
+    credentialProfile: GatewayCredentialProfile? = nil,
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    outputWriter: GatewayOutputWriter = .live,
+    cancellation: GatewaySDKCancellation? = nil
+  ) {
+    self.init(
+      role: role, authorizer: authorizer, transport: transport, credentialProfile: credentialProfile,
+      environment: environment, outputWriter: outputWriter, cancellation: cancellation, remoteDispatch: nil, credentialDecoder: .live,
+      maximumAggregateResponseBytes: nil
+    )
+  }
+
+  init(
+    role: GatewayRole,
+    authorizer: GatewayAuthorizing? = nil,
+    transport: GatewayHTTPTransport = URLSessionGatewayTransport(),
+    credentialProfile: GatewayCredentialProfile? = nil,
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    outputWriter: GatewayOutputWriter = .live,
+    cancellation: GatewaySDKCancellation? = nil,
+    remoteDispatch: GatewaySDKRemoteDispatch? = nil,
+    credentialDecoder: GatewaySDKCredentialDecoder,
+    maximumAggregateResponseBytes: Int? = nil,
+    pageAllAccumulationObserver: @escaping @Sendable () -> Void = {},
+    requestJSONStructuralValidationObserver: @escaping @Sendable () -> Void = {},
+    requestJSONDecoder: GatewayProviderJSONDecoder = .live,
+    inputDataOverrides: [String: Data] = [:], tokenStorePersistenceCompletedObserver: @escaping @Sendable () -> Void = {}, tokenStoreRefreshWaitObserver: @escaping @Sendable () -> Void = {}
+  ) {
+    self.role = role
+    self.credentialProfile = credentialProfile
+    self.environment = environment
+    self.outputWriter = outputWriter
+    self.cancellation = cancellation
+    self.remoteDispatch = remoteDispatch
+    self.credentialDecoder = credentialDecoder
+    self.maximumAggregateResponseBytes = maximumAggregateResponseBytes.map {
+      min(GatewaySDKExecutionPolicy.maximumResponseBytes, max(1, $0))
+    }
+    self.pageAllAccumulationObserver = pageAllAccumulationObserver
+    self.requestJSONStructuralValidationObserver = requestJSONStructuralValidationObserver
+    self.requestJSONDecoder = requestJSONDecoder
+    self.inputDataOverrides = inputDataOverrides
+    self.authorizer = authorizer
+      ?? credentialProfile.map { profile in
+        if let cancellation {
+          return GatewaySDKPersistedAuthorizer(
+            profile: profile, transport: transport, cancellation: cancellation, decoder: credentialDecoder,
+            tokenStorePersistenceCompletedObserver: tokenStorePersistenceCompletedObserver, tokenStoreRefreshWaitObserver: tokenStoreRefreshWaitObserver
+          )
+        }
+        return PersistedTokenAuthorizer(profile: profile, transport: transport)
+      }
+      ?? GatewayDeferredAuthorizer(role: role, environment: environment, transport: transport, decoder: credentialDecoder)
+    self.transport = transport
+  }
+  public func run(arguments: [String]) -> GatewayCommandResult {
+    run(arguments: arguments, inputDataOverrides: inputDataOverrides)
+  }
+
+  func run(arguments: [String], inputDataOverrides: [String: Data]) -> GatewayCommandResult {
+    do {
+      if arguments.isEmpty || arguments == ["auth"] || arguments.contains("--help") || arguments.contains("-h") {
+        return success(["usage": usage, "service": role.service.rawValue, "role": role.accessMode.rawValue])
+      }
+      if arguments == ["--version"] { return success(["version": Version.current]) }
+      if let sdkResult = GatewaySDKCommandRouter.handle(arguments: arguments, runner: self) {
+        return sdkResult
+      }
+      let parsed = try ParsedArguments(arguments)
+      let command = parsed.command
+      if command == "config validate" {
+        let profile = try resolvedProfile(parsed.options["credential"]?.last ?? role.identifier)
+        return success(["operation": command, "status": "VALID", "service": role.service.rawValue, "role": role.accessMode.rawValue, "credential": profile.id])
+      }
+      if command == "auth status" || command == "doctor" {
+        return try diagnosticResult(command: command, options: parsed.options)
+      }
+      if ["auth login", "auth logout", "auth revoke"].contains(command) {
+        return try authenticationResult(command: command, options: parsed.options)
+      }
+      guard allowedCommands.contains(command) else {
+        return failure("FORBIDDEN_COMMAND", "\(command) is not available to the \(role.identifier) executable.", exitCode: 2)
+      }
+      try validate(command: command, options: parsed.options)
+      let plan = try GatewayRequestBuilder.plan(role: role, operation: command, options: parsed.options)
+      let body = try GatewayInputValidator.body(
+        for: role, command: command, options: parsed.options, inputDataOverrides: inputDataOverrides,
+        cancellation: cancellation, structuralValidationObserver: requestJSONStructuralValidationObserver,
+        jsonDecoder: requestJSONDecoder
+      )
+      if maximumAggregateResponseBytes != nil, command != "files upload", command != "files replace-content", let body,
+        body.count > GatewayInputValidator.maximumBodyBytes {
+        throw GatewayError.inputTooLarge
+      }
+      if parsed.options["dry-run"] != nil {
+        return success(dryRunPayload(for: plan, containsBodyValues: body != nil))
+      }
+      let token: String
+      if let cancellation {
+        guard let cancellableAuthorizer = authorizer as? GatewayCancellableAuthorizer else {
+          throw GatewayError.transportFailure("SDK authorizer must conform to GatewayCancellableAuthorizer")
+        }
+        token = try cancellableAuthorizer.accessToken(for: role, cancellation: cancellation)
+      } else {
+        token = try authorizer.accessToken(for: role)
+      }
+      if role.service == .drive, [
+        "files replace-content", "files rename", "files move", "files trash", "files untrash",
+        "files delete", "permissions update", "permissions delete"
+      ].contains(command) {
+        let preflight = try driveMutationPreflight(command: command, token: token, options: parsed.options)
+        if let preflight { return preflight }
+      }
+      if role.service == .drive, ["files upload", "files replace-content"].contains(command), let body {
+        return try driveUploadResult(operation: command, plan: plan, input: body, token: token, options: parsed.options)
+      }
+      if role.service == .drive, drivePaginatedOperations.contains(command), parsed.options["page-all"] != nil {
+        return try drivePaginatedResult(operation: command, token: token, options: parsed.options)
+      }
+      let url = try gatewayProviderURL(for: plan, role: role)
+      if isOutcomeUncertainRemoteWrite(command) {
+        remoteDispatch?.markOutcomeUncertainRequest(admitsTerminalResponse: true, requiresSuccessfulResponse: true)
+      }
+      var headers = ["Authorization": "Bearer \(token)", "Content-Type": "application/json"]
+      if cancellation != nil, role.service == .drive, ["files download", "files export", "revisions download"].contains(command) {
+        headers["X-Gateway-SDK-Max-Response-Bytes"] = parsed.options["max-bytes"]?.last
+      }
+      let response = try transport.send(url: url, method: plan.method, headers: headers, body: body)
+      if role.service == .drive, ["files download", "files export", "revisions download"].contains(command) {
+        return try driveTransferResult(operation: command, response: response, options: parsed.options)
+      }
+      return try providerResult(operation: command, response: response)
+    } catch GatewayError.forbiddenCommand(let command) {
+      return failure("FORBIDDEN_COMMAND", "\(command) is not available to this executable.", exitCode: 2)
+    } catch GatewayError.invalidArgument(let message) {
+      return Self.canonicalFailure(for: GatewayError.invalidArgument(message))!
+    } catch GatewayError.inputTooLarge {
+      return Self.canonicalFailure(for: GatewayError.inputTooLarge)!
+    } catch GatewayError.authenticationRequired {
+      return failure("AUTH_REQUIRED", authDiagnosticMessage("Configure a role-specific OAuth credential. Token values are not accepted as command arguments.", arguments: arguments), exitCode: 4)
+    } catch GatewayError.grantInspectionFailed {
+      return failure("GRANT_INSPECTION_FAILED", "The imported token grant could not be inspected online; provider use is denied.", exitCode: 4)
+    } catch GatewayError.scopeMismatch {
+      return failure("SCOPE_MISMATCH", authDiagnosticMessage("The inspected token grant does not exactly match this executable role.", arguments: arguments), exitCode: 4)
+    } catch GatewayError.transportFailure(let message) {
+      if message.hasPrefix("OUTCOME_UNKNOWN:") {
+        if message.hasPrefix("OUTCOME_UNKNOWN: SDK_LOCAL_PUBLICATION_UNCERTAIN") {
+          return failure("OUTCOME_UNKNOWN", String(message.dropFirst("OUTCOME_UNKNOWN: ".count)), exitCode: 5)
+        }
+        return failure("OUTCOME_UNKNOWN", "Provider write may have completed; do not retry without reconciliation.", exitCode: 5)
+      }
+      if message.hasPrefix("TRANSFER_LIMIT_EXCEEDED:") {
+        return failure("TRANSFER_LIMIT_EXCEEDED", "Provider response exceeds --max-bytes.", exitCode: 5)
+      }
+      return failure("TRANSPORT_FAILURE", message, exitCode: 5)
+    } catch {
+      return failure("INVALID_ARGUMENT", "Unable to parse command arguments.", exitCode: 2)
+    }
+  }
+
+  /// Retains the command-line execution contract while recording whether an operation-run
+  /// request reached a destructive provider dispatch boundary.
+  func trackingRemoteDispatch(_ remoteDispatch: GatewaySDKRemoteDispatch) -> GatewayCommandRunner {
+    GatewayCommandRunner(
+      role: role,
+      authorizer: authorizer,
+      transport: GatewayDispatchTrackingTransport(base: transport, remoteDispatch: remoteDispatch),
+      credentialProfile: credentialProfile,
+      environment: environment,
+      outputWriter: outputWriter,
+      cancellation: cancellation,
+      remoteDispatch: remoteDispatch,
+      credentialDecoder: credentialDecoder,
+      maximumAggregateResponseBytes: maximumAggregateResponseBytes,
+      pageAllAccumulationObserver: pageAllAccumulationObserver,
+      inputDataOverrides: inputDataOverrides
+    )
+  }
+
+  private var allowedCommands: Set<String> { GatewayCapabilityCatalog.commands(for: role) }
+
+  private var drivePaginatedOperations: Set<String> {
+    [
+      "changes list", "shared-drives list", "files list", "permissions list",
+      "comments list", "replies list", "revisions list"
+    ]
+  }
+
+  private func isOutcomeUncertainRemoteWrite(_ command: String) -> Bool {
+    GoogleDocumentsCatalog.mutatingOperations.contains(command)
+  }
+
+  private var usage: String {
+    let common = "config validate | auth login --credential ID [--open-browser true|false] [--timeout-seconds N]"
+      + " | auth status --credential ID | auth logout [--credential ID] | auth revoke --credential ID --confirm-credential ID | doctor"
+    let sdk = "schema print | schema search <regex> [--kinds k1,k2] [--include-referenced-types] [--limit N] | operation run <name> --variables JSON|--variables-file PATH"
+    let readable = readableUsage.map { "\nReadable writes: \($0)" } ?? ""
+    return [
+      "Usage: \(executableName) <command> [options]",
+      "Role: \(role.accessMode.rawValue); exact scope: \(role.scope)",
+      "Commands: \(allowedCommands.sorted().joined(separator: ", "))\(readable)",
+      "Common: \(common)",
+      "SDK: \(sdk)"
+    ].joined(separator: "\n")
+  }
+
+  private var readableUsage: String? {
+    guard role.accessMode == .write else { return nil }
+    switch role.service {
+    case .docs:
+      return "document create --title TITLE; document batch-update --document-id ID --text TEXT; use --json or --json-file for advanced bodies"
+    case .sheets:
+      return "values append|update --spreadsheet-id ID --range RANGE --values a,b or --json-values '[1,true]' [--major-dimension ROWS|COLUMNS]; use --input-file for raw bodies"
+    case .drive:
+      return "folders create --name NAME [--parent-id ID]; files upload --input PATH --max-bytes N [--name NAME --parent-id ID --mime-type TYPE]"
+    }
+  }
+
+  private var executableName: String {
+    let noun = role.service == .sheets ? "sheet" : role.service.rawValue
+    let suffix = role.accessMode == .read ? "reader" : "writer"
+    return "google-\(noun)-gateway-\(suffix)"
+  }
+
+  private func validate(command: String, options: [String: [String]]) throws {
+    let allowedOptions = GatewayCommandFlagInventory.allowedOptions
+    if let allowed = allowedOptions[command], let unknown = Set(options.keys).subtracting(allowed).sorted().first {
+      throw GatewayError.invalidArgument("Unsupported option --\(unknown) for \(command)")
+    }
+    switch role.service {
+    case .docs:
+      try validateDocs(command: command, options: options)
+    case .sheets:
+      try validateSheets(command: command, options: options)
+    case .drive:
+      try validateDrive(command: command, options: options)
+    }
+  }
+
+  private func validateDocs(command: String, options: [String: [String]]) throws {
+    if command.contains("document") && command != "document create" {
+      try require("document-id", options: options)
+    }
+    if command == "document create" {
+      try GatewayReadableInput.selectExactlyOne(options, names: ["title", "json", "json-file"])
+    }
+    if command == "document batch-update" {
+      try GatewayReadableInput.selectExactlyOne(options, names: ["text", "json", "json-file"])
+    }
+  }
+
+  private func validateSheets(command: String, options: [String: [String]]) throws {
+    if command == "spreadsheet create" { try require("title", options: options) }
+    if command != "spreadsheet create" { try require("spreadsheet-id", options: options) }
+    let bodyCommands = [
+      "spreadsheet get-by-data-filter", "spreadsheet batch-update", "values batch-get-by-data-filter",
+      "developer-metadata search", "values batch-update",
+      "values batch-clear", "values batch-clear-by-data-filter", "values batch-update-by-data-filter"
+    ]
+    if bodyCommands.contains(command) { try require("input-file", options: options) }
+    if ["values append", "values update"].contains(command) {
+      try GatewayReadableInput.selectExactlyOne(options, names: ["values", "json-values", "input-file"])
+      if options["input-file"] != nil, options["major-dimension"] != nil {
+        throw GatewayError.invalidArgument("--major-dimension is only valid with --values or --json-values")
+      }
+      if let dimension = options["major-dimension"]?.last, !["ROWS", "COLUMNS"].contains(dimension) {
+        throw GatewayError.invalidArgument("--major-dimension must be ROWS or COLUMNS")
+      }
+    }
+    if ["values get", "values append", "values update", "values clear"].contains(command) {
+      try require("range", options: options)
+    }
+    if let inputOption = options["value-input-option"]?.last, !["RAW", "USER_ENTERED"].contains(inputOption) {
+      throw GatewayError.invalidArgument("--value-input-option must be RAW or USER_ENTERED")
+    }
+    if command == "values clear", options["dry-run"] == nil {
+      let range = options["range"]?.last?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let confirmation = options["confirm-range"]?.last?.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard range == confirmation else { throw GatewayError.invalidArgument("--confirm-range must exactly match --range") }
+    }
+    if command == "spreadsheet batch-update", options["dry-run"] == nil {
+      guard options["spreadsheet-id"]?.last == options["confirm-spreadsheet-id"]?.last else {
+        throw GatewayError.invalidArgument("--confirm-spreadsheet-id must exactly match --spreadsheet-id")
+      }
+    }
+    if ["values batch-clear", "values batch-clear-by-data-filter"].contains(command),
+       options["dry-run"] == nil,
+       options["confirm-clear"] == nil {
+      throw GatewayError.invalidArgument("Batch clear requires --confirm-clear")
+    }
+    if command == "sheet copy-to" {
+      try require("sheet-id", options: options)
+      try require("destination-spreadsheet-id", options: options)
+    }
+    if command == "developer-metadata get" { try require("metadata-id", options: options) }
+  }
+
+  // Validation is an exhaustive safety policy for the curated Drive surface.
+  // swiftlint:disable:next cyclomatic_complexity
+  private func validateDrive(command: String, options: [String: [String]]) throws {
+    let commandsRequiringFileID = [
+      "files get", "files download", "files export", "files copy", "files replace-content", "files rename",
+      "files move", "files trash", "files untrash", "permissions list", "permissions get", "permissions create",
+      "permissions update", "permissions delete", "comments list", "comments get", "comments create",
+      "comments update", "comments delete", "replies list", "replies get", "replies create", "replies update",
+      "replies delete", "revisions list", "revisions get", "revisions download", "revisions update"
+    ]
+    if commandsRequiringFileID.contains(command) { try require("file-id", options: options) }
+    if ["files upload", "files replace-content"].contains(command) {
+      try require("input", options: options)
+      try require("max-bytes", options: options)
+    }
+    if command == "files upload" { try GatewayReadableInput.validateDriveUploadMetadata(options) }
+    if let maximum = options["max-bytes"]?.last.flatMap(Int.init), maximum < 0 {
+      throw GatewayError.invalidArgument("--max-bytes must be non-negative")
+    }
+    if ["files download", "files export", "revisions download"].contains(command) {
+      try require("output", options: options)
+      guard let maximum = options["max-bytes"]?.last.flatMap(Int.init), maximum >= 0 else {
+        throw GatewayError.invalidArgument("Drive transfers require a non-negative --max-bytes")
+      }
+      let output = options["output"]?.last ?? ""
+      try outputWriter.validate(output, options["overwrite"] != nil)
+    }
+    if ["files list", "permissions list", "changes list", "shared-drives list", "comments list", "replies list", "revisions list"].contains(command) {
+      if let pageSize = options["page-size"]?.last.flatMap(Int.init), !(1...1000).contains(pageSize) {
+        throw GatewayError.invalidArgument("--page-size must be between 1 and 1000")
+      }
+      if let maxPages = options["max-pages"]?.last.flatMap(Int.init), !(1...100).contains(maxPages) {
+        throw GatewayError.invalidArgument("--max-pages must be between 1 and 100")
+      }
+    }
+    if ["files replace-content", "files rename", "files move", "files trash", "files untrash", "files delete"].contains(command) {
+      try require("expected-modified-time", options: options)
+      let fileID = options["file-id"]?.last
+      guard fileID == options["confirm-file-id"]?.last else { throw GatewayError.invalidArgument("--confirm-file-id must exactly match --file-id") }
+    }
+    if command == "files delete", options["acknowledge-permanent-delete"] == nil {
+      throw GatewayError.invalidArgument("Permanent deletion bypasses the trash and requires --acknowledge-permanent-delete")
+    }
+    if command == "files move", options["add-parents"] == nil, options["remove-parents"] == nil {
+      throw GatewayError.invalidArgument("files move requires --add-parents or --remove-parents")
+    }
+    if command == "files copy" {
+      guard options["file-id"]?.last == options["confirm-file-id"]?.last else {
+        throw GatewayError.invalidArgument("--confirm-file-id must exactly match --file-id")
+      }
+    }
+    if ["permissions get", "permissions update", "permissions delete"].contains(command) {
+      try require("permission-id", options: options)
+    }
+    if ["permissions update", "permissions delete"].contains(command) {
+      let permissionID = options["permission-id"]?.last
+      guard permissionID == options["confirm-permission-id"]?.last else { throw GatewayError.invalidArgument("--confirm-permission-id must exactly match --permission-id") }
+      try require("expected-role", options: options)
+    }
+    if command == "permissions create" {
+      try require("type", options: options)
+      try require("role", options: options)
+      let type = options["type"]?.last
+      guard ["user", "group", "domain", "anyone"].contains(type) else {
+        throw GatewayError.invalidArgument("Unsupported permission type")
+      }
+      if ["user", "group"].contains(type) { try require("email", options: options) }
+      if type == "domain" { try require("domain", options: options) }
+      if type == "anyone", options["email"] != nil || options["domain"] != nil { throw GatewayError.invalidArgument("anyone permissions cannot specify --email or --domain") }
+      if ["domain", "anyone"].contains(type), options["acknowledge-broad-access"] == nil { throw GatewayError.invalidArgument("Broad sharing requires --acknowledge-broad-access") }
+      guard ["reader", "commenter", "writer"].contains(options["role"]?.last) else { throw GatewayError.invalidArgument("Unsupported permission role") }
+    }
+    if command == "permissions update" {
+      try require("role", options: options)
+      guard ["reader", "commenter", "writer"].contains(options["role"]?.last) else {
+        throw GatewayError.invalidArgument("Unsupported permission role")
+      }
+    }
+    if command == "shared-drives get" { try require("drive-id", options: options) }
+    if command == "changes list" { try require("page-token", options: options) }
+    if ["comments get", "comments update", "comments delete"].contains(command) {
+      try require("comment-id", options: options)
+    }
+    if command == "comments create" { try require("content", options: options) }
+    if ["comments update", "comments delete"].contains(command) {
+      guard options["comment-id"]?.last == options["confirm-comment-id"]?.last else {
+        throw GatewayError.invalidArgument("--confirm-comment-id must exactly match --comment-id")
+      }
+      if command == "comments update" { try require("content", options: options) }
+    }
+    if command.hasPrefix("replies ") { try require("comment-id", options: options) }
+    if ["replies get", "replies update", "replies delete"].contains(command) {
+      try require("reply-id", options: options)
+    }
+    if command == "replies create" {
+      guard options["content"] != nil || options["action"] != nil else {
+        throw GatewayError.invalidArgument("Reply create requires --content or --action")
+      }
+    }
+    if ["replies update", "replies delete"].contains(command) {
+      guard options["reply-id"]?.last == options["confirm-reply-id"]?.last else {
+        throw GatewayError.invalidArgument("--confirm-reply-id must exactly match --reply-id")
+      }
+      if command == "replies update" { try require("content", options: options) }
+    }
+    if ["revisions get", "revisions download", "revisions update"].contains(command) {
+      try require("revision-id", options: options)
+    }
+    if command == "revisions update" {
+      guard options["revision-id"]?.last == options["confirm-revision-id"]?.last else {
+        throw GatewayError.invalidArgument("--confirm-revision-id must exactly match --revision-id")
+      }
+      guard options["keep-forever"] != nil || options["publish"] != nil else {
+        throw GatewayError.invalidArgument("Revision update requires --keep-forever or --publish")
+      }
+    }
+  }
+
+  private func require(_ option: String, options: [String: [String]]) throws {
+    guard
+      let value = options[option]?.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !value.isEmpty
+    else {
+      throw GatewayError.invalidArgument("Missing required --\(option)")
+    }
+  }
+
+  private func dryRunPayload(for plan: GatewayRequestPlan, containsBodyValues: Bool) -> [String: Any] {
+    return [
+      "operation": plan.operation,
+      "dryRun": true,
+      "request": ["method": plan.method, "path": plan.path, "query": plan.query.map { ["name": $0.0, "value": $0.1] }],
+      "meta": ["tokenLoaded": false, "transportCalled": false, "bodyValuesRedacted": containsBodyValues]
+    ]
+  }
+
+  private func success(_ data: [String: Any]) -> GatewayCommandResult {
+    GatewayCommandResult(stdout: gatewayEncode(["ok": true, "data": data]), exitCode: 0)
+  }
+
+  private func failure(_ code: String, _ message: String, exitCode: Int32) -> GatewayCommandResult {
+    if code != "OUTCOME_UNKNOWN", remoteDispatch?.hasOutcomeUncertainDispatch == true {
+      return Self.errorResult(
+        code: "OUTCOME_UNKNOWN", message: "Provider write may have completed; do not retry without reconciliation.", exitCode: 5
+      )
+    }
+    return Self.errorResult(code: code, message: message, exitCode: exitCode)
+  }
+
+  /// Maps validation failures that can occur before a catalog request reaches `run(arguments:)`.
+  static func canonicalFailure(for error: Error) -> GatewayCommandResult? {
+    switch error {
+    case GatewayError.invalidArgument(let message):
+      return errorResult(code: "INVALID_ARGUMENT", message: message, exitCode: 2)
+    case GatewayError.inputTooLarge:
+      return errorResult(
+        code: "INPUT_TOO_LARGE",
+        message: "The input exceeds the configured command size limit.",
+        exitCode: 2
+      )
+    case GatewayError.forbiddenCommand(let message):
+      return errorResult(code: "FORBIDDEN_COMMAND", message: message, exitCode: 2)
+    default:
+      return nil
+    }
+  }
+
+  static func outcomeUnknownFailure() -> GatewayCommandResult {
+    errorResult(
+      code: "OUTCOME_UNKNOWN",
+      message: "Provider write may have completed; do not retry without reconciliation.",
+      exitCode: 5
+    )
+  }
+
+  private static func errorResult(code: String, message: String, exitCode: Int32) -> GatewayCommandResult {
+    let object: [String: Any] = ["ok": false, "error": ["code": code, "message": message]]
+    let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{\"ok\":false}".utf8)
+    let output = String(data: data, encoding: .utf8) ?? "{\"ok\":false}"
+    return .init(stdout: output, exitCode: exitCode)
+  }
+
+  private func driveUploadResult(operation: String, plan: GatewayRequestPlan, input: Data, token: String, options: [String: [String]]) throws -> GatewayCommandResult {
+    let metadataObject = operation == "files upload" ? try GatewayReadableInput.driveUploadMetadata(options) : [:]
+    let mediaType = operation == "files upload"
+      ? (metadataObject["mimeType"] as? String ?? "application/octet-stream")
+      : "application/octet-stream"
+    let metadata = try JSONSerialization.data(withJSONObject: metadataObject, options: [.sortedKeys])
+    remoteDispatch?.markOutcomeUncertainRequest(admitsTerminalResponse: false)
+    let initial = try transport.send(
+      url: try gatewayProviderURL(for: plan, role: role),
+      method: plan.method,
+      headers: [
+        "Authorization": "Bearer \(token)",
+        "Content-Type": "application/json",
+        "X-Upload-Content-Type": mediaType,
+        "X-Upload-Content-Length": String(input.count)
+      ],
+      body: metadata
+    )
+    guard (200...299).contains(initial.statusCode), let location = initial.location, var sessionURL = URL(string: location), approvedUploadSessionURL(sessionURL) else {
+      return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(initial.data, cancellation: cancellation), exitCode: 5)
+    }
+    let chunkSize = 256 * 1024
+    if input.isEmpty {
+      remoteDispatch?.markOutcomeUncertainRequest(admitsTerminalResponse: true, requiresSuccessfulResponse: true)
+      let response = try transport.send(
+        url: sessionURL,
+        method: "PUT",
+        headers: [
+          "Authorization": "Bearer \(token)",
+          "Content-Length": "0",
+          "Content-Type": mediaType,
+          "Content-Range": "bytes */0"
+        ],
+        body: Data()
+      )
+      return try providerResult(operation: operation, response: response)
+    }
+    var offset = 0
+    var attempts = 0
+    var finalResponse: GatewayHTTPResponse?
+    while offset < input.count {
+      let end = min(offset + chunkSize, input.count)
+      let chunk = input.subdata(in: offset..<end)
+      remoteDispatch?.markOutcomeUncertainRequest(
+        admitsTerminalResponse: end == input.count, requiresSuccessfulResponse: end == input.count
+      )
+      let response = try transport.send(
+        url: sessionURL,
+        method: "PUT",
+        headers: [
+          "Authorization": "Bearer \(token)",
+          "Content-Length": String(chunk.count),
+          "Content-Type": mediaType,
+          "Content-Range": "bytes \(offset)-\(end - 1)/\(input.count)"
+        ],
+        body: chunk
+      )
+      if response.statusCode == 308 {
+        guard let confirmed = GatewayResumableUploadProgress.confirmedOffset(
+          response, sessionURL: &sessionURL, sentFrom: offset, sentTo: end
+        ) else {
+          return failure("PROVIDER_ERROR", "Provider did not confirm resumable upload progress.", exitCode: 5)
+        }
+        offset = confirmed
+        attempts = 0
+        continue
+      }
+      if (200...299).contains(response.statusCode) {
+        guard end == input.count else { return Self.outcomeUnknownFailure() }
+        finalResponse = response
+        offset = end
+        continue
+      }
+      if cancellation != nil {
+        return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(response.data, cancellation: cancellation), exitCode: 5)
+      }
+      attempts += 1
+      guard attempts < 3 else { return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(response.data, cancellation: cancellation), exitCode: 5) }
+    }
+    guard let finalResponse else { return failure("PROVIDER_ERROR", "Resumable upload did not return a final response.", exitCode: 5) }
+    return try providerResult(operation: operation, response: finalResponse)
+  }
+  private func driveTransferResult(operation: String, response: GatewayHTTPResponse, options: [String: [String]]) throws -> GatewayCommandResult {
+    guard (200...299).contains(response.statusCode) else {
+      return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(response.data, cancellation: cancellation), exitCode: 5)
+    }
+    let limit = options["max-bytes"]?.last.flatMap(Int.init) ?? 0
+    guard response.data.count <= limit else {
+      return failure("TRANSFER_LIMIT_EXCEEDED", "Provider response exceeds --max-bytes.", exitCode: 5)
+    }
+    guard let output = options["output"]?.last else { throw GatewayError.invalidArgument("Missing required --output") }
+    try outputWriter.write(response.data, output, options["overwrite"] != nil)
+    return success(["operation": operation, "bytesWritten": response.data.count, "output": output, "requestId": response.requestID ?? NSNull()])
+  }
+
+  private func drivePaginatedResult(operation: String, token: String, options: [String: [String]]) throws -> GatewayCommandResult {
+    let collectionKeys = [
+      "changes list": "changes",
+      "shared-drives list": "drives",
+      "files list": "files",
+      "permissions list": "permissions",
+      "comments list": "comments",
+      "replies list": "replies",
+      "revisions list": "revisions"
+    ]
+    guard let collectionKey = collectionKeys[operation] else {
+      throw GatewayError.forbiddenCommand(operation)
+    }
+    let maximumPages = options["max-pages"]?.last.flatMap(Int.init) ?? 10
+    var accumulated: [Any] = []
+    var pageToken = operation == "changes list" ? options["page-token"]?.last : nil
+    var newStartPageToken: String?
+    var pages = 0
+    var retainedBytes = 0
+    repeat {
+      try checkCancellation(cancellation)
+      pages += 1
+      var pageOptions = options
+      if let pageToken { pageOptions["page-token"] = [pageToken] }
+      let plan = try GatewayRequestBuilder.plan(role: role, operation: operation, options: pageOptions)
+      let response = try transport.send(
+        url: try gatewayProviderURL(for: plan, role: role),
+        method: plan.method,
+        headers: ["Authorization": "Bearer \(token)", "Content-Type": "application/json"],
+        body: nil
+      )
+      try checkCancellation(cancellation)
+      if let maximumAggregateResponseBytes {
+        let total = retainedBytes.addingReportingOverflow(response.data.count)
+        guard !total.overflow, total.partialValue <= maximumAggregateResponseBytes else {
+          return failure("RESPONSE_LIMIT_EXCEEDED", "Page-all response budget exceeded.", exitCode: 5)
+        }
+        retainedBytes = total.partialValue
+      }
+      guard (200...299).contains(response.statusCode) else {
+        return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(response.data, cancellation: cancellation), exitCode: 5)
+      }
+      guard try GatewayBoundedProviderJSON.structureIsBounded(response.data, cancellation: cancellation) else {
+        return failure("RESPONSE_LIMIT_EXCEEDED", "Provider response exceeds the SDK JSON structure limit.", exitCode: 5)
+      }
+      guard let object = response.jsonObject() as? [String: Any] else {
+        return failure("PROVIDER_RESPONSE_INVALID", "Provider returned a non-JSON response.", exitCode: 5)
+      }
+      try checkCancellation(cancellation)
+      guard let values = object[collectionKey] as? [Any] else {
+        return failure("PROVIDER_RESPONSE_INVALID", "Provider returned an invalid \(collectionKey) page.", exitCode: 5)
+      }
+      let nextToken: String?
+      if let value = object["nextPageToken"] {
+        guard let token = value as? String else {
+          return failure("PROVIDER_RESPONSE_INVALID", "Provider returned an invalid page token.", exitCode: 5)
+        }
+        nextToken = token
+      } else { nextToken = nil }
+      if let value = object["newStartPageToken"] {
+        guard let token = value as? String else {
+          return failure("PROVIDER_RESPONSE_INVALID", "Provider returned an invalid start page token.", exitCode: 5)
+        }
+        newStartPageToken = token
+      }
+      accumulated.append(contentsOf: values)
+      pageAllAccumulationObserver()
+      pageToken = nextToken
+    } while pageToken?.isEmpty == false && pages < maximumPages
+    try checkCancellation(cancellation)
+    let payload: [String: Any] = [
+      "operation": operation,
+      collectionKey: accumulated,
+      "pagesFetched": pages,
+      "truncated": pageToken?.isEmpty == false,
+      "nextPageToken": pageToken ?? NSNull(),
+      "newStartPageToken": newStartPageToken ?? NSNull()
+    ]
+    // SDK bounded execution needs a final serialization check because JSON punctuation can make
+    // the retained result larger than the sum of provider response bodies. Direct runner and CLI
+    // calls preserve their established unbounded aggregate behavior.
+    try checkCancellation(cancellation)
+    if let maximumAggregateResponseBytes {
+      guard let serialized = try? JSONSerialization.data(withJSONObject: ["ok": true, "data": payload], options: [.sortedKeys]),
+        serialized.count <= maximumAggregateResponseBytes
+      else {
+        return failure("RESPONSE_LIMIT_EXCEEDED", "Page-all result budget exceeded.", exitCode: 5)
+      }
+    }
+    try checkCancellation(cancellation)
+    return success(payload)
+  }
+
+  private func driveMutationPreflight(command: String, token: String, options: [String: [String]]) throws -> GatewayCommandResult? {
+    let fileID = options["file-id"]?.last ?? ""
+    let pathID = fileID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? fileID
+    let isPermission = command.hasPrefix("permissions ")
+    let path: String
+    let expectedKey: String
+    let actualKey: String
+    if isPermission {
+      let permissionID = options["permission-id"]?.last ?? ""
+      let pathPermissionID = permissionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? permissionID
+      path = "/drive/v3/files/\(pathID)/permissions/\(pathPermissionID)"
+      expectedKey = "expected-role"
+      actualKey = "role"
+    } else {
+      path = "/drive/v3/files/\(pathID)"
+      expectedKey = "expected-modified-time"
+      actualKey = "modifiedTime"
+    }
+    let plan = GatewayRequestPlan(operation: "preflight", method: "GET", path: path, query: [("supportsAllDrives", "true"), ("fields", actualKey)])
+    let response = try transport.send(
+      url: try gatewayProviderURL(for: plan, role: role),
+      method: "GET",
+      headers: ["Authorization": "Bearer \(token)", "Content-Type": "application/json"],
+      body: nil
+    )
+    try checkCancellation(cancellation)
+    guard (200...299).contains(response.statusCode) else {
+      return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(response.data, cancellation: cancellation), exitCode: 5)
+    }
+    guard try GatewayBoundedProviderJSON.structureIsBounded(response.data, cancellation: cancellation) else {
+      return failure("RESPONSE_LIMIT_EXCEEDED", "Provider response exceeds the SDK JSON structure limit.", exitCode: 5)
+    }
+    // Keep the deadline active on both sides of Foundation decoding, including malformed responses.
+    try checkCancellation(cancellation)
+    guard let object = response.jsonObject() as? [String: Any] else {
+      return failure("STALE_REMOTE_STATE", "Remote state no longer matches --\(expectedKey).", exitCode: 3)
+    }
+    try checkCancellation(cancellation)
+    guard let actual = object[actualKey] as? String, actual == options[expectedKey]?.last else {
+      return failure("STALE_REMOTE_STATE", "Remote state no longer matches --\(expectedKey).", exitCode: 3)
+    }
+    return nil
+  }
+}
+
+private extension GatewayCommandRunner {
+  private func authenticationResult(command: String, options: [String: [String]]) throws -> GatewayCommandResult {
+    if command == "auth login", options["authorization-code"] != nil || options["pkce-verifier"] != nil {
+      throw GatewayError.invalidArgument("Authorization codes and PKCE verifiers are not accepted as command arguments")
+    }
+    let credential = options["credential"]?.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? role.identifier
+    guard !credential.isEmpty else { throw GatewayError.invalidArgument("Missing required --credential") }
+    let profile = try resolvedProfile(credential, allowMissingClient: command == "auth logout")
+    if command == "auth logout" {
+      let external = profile.tokenStoreJSON != nil || profile.tokenStorePathFromEnvironment
+      let result = try GatewayLogout.perform(externalCredential: external) {
+        try GatewayTokenStoreFile.completeLegacyMigration(profile: profile)
+        let exists: Bool
+        do { _ = try GatewaySecureTokenFilesystem.read(profile.tokenStoreURL); exists = true } catch let error as POSIXError where error.code == .ENOENT { exists = false }
+        try GatewayTokenStoreFile.revoke(url: profile.tokenStoreURL)
+        return exists
+      }
+      return success(["operation": command, "credential": credential, "state": result.state,
+                      "localTokenDeleted": result.localTokenDeleted,
+                      "externalCredentialPreserved": result.externalCredentialPreserved])
+    }
+    if command == "auth revoke" {
+      guard options["confirm-credential"]?.last == credential else { throw GatewayError.invalidArgument("--confirm-credential must exactly match --credential") }
+      let store = try? tokenStore(profile: profile)
+      if profile.tokenStoreJSON == nil { try GatewayTokenStoreFile.completeLegacyMigration(profile: profile) }
+      if let store {
+        try GatewayOAuthClient(profile: profile, transport: transport).revoke(store)
+      }
+      if profile.tokenStoreJSON == nil {
+        try GatewayTokenStoreFile.revoke(url: profile.tokenStoreURL)
+      }
+      return success([
+        "operation": command,
+        "credential": credential,
+        "revoked": true,
+        "environmentTokenStore": profile.tokenStoreJSON != nil
+      ])
+    }
+    guard profile.tokenStoreJSON == nil else {
+      throw GatewayError.invalidArgument(profile.tokenSourceMessage("auth login cannot replace an immutable environment token store"))
+    }
+    let openBrowser: Bool
+    switch options["open-browser"]?.last?.lowercased() ?? "true" {
+    case "true": openBrowser = true
+    case "false": openBrowser = false
+    default: throw GatewayError.invalidArgument("--open-browser must be true or false")
+    }
+    let timeout = options["timeout-seconds"]?.last.flatMap(TimeInterval.init) ?? 180
+    guard timeout > 0, timeout <= 600 else { throw GatewayError.invalidArgument("--timeout-seconds must be between 1 and 600") }
+    let store = try GatewayLoopbackOAuth(profile: profile, transport: transport).login(timeout: timeout, openBrowser: openBrowser)
+    try GatewayTokenStoreFile.completeLegacyMigration(profile: profile)
+    try GatewayTokenStoreFile.write(store, to: profile.tokenStoreURL)
+    try GatewayTokenStoreFile.discardLegacyStore(profile: profile)
+    return success(["operation": command, "credential": credential, "status": "READY", "scope": role.scope]
+      .merging(profile.tokenSourceDetails) { current, _ in current })
+  }
+
+  private func diagnosticResult(command: String, options: [String: [String]]) throws -> GatewayCommandResult {
+    let profile = try resolvedProfile(options["credential"]?.last ?? role.identifier)
+    let store: GatewayTokenStore?
+    do {
+      store = try tokenStore(profile: profile)
+    } catch let error as GatewayError where cancellation != nil && isCancellationFailure(error) {
+      throw error
+    } catch {
+      store = nil
+    }
+    return success([
+      "operation": command,
+      "credential": profile.id,
+      "role": role.identifier,
+      "requiredScope": role.scope,
+      "tokenStorePath": profile.tokenStoreURL.path,
+      "status": store == nil ? "NOT_READY" : "READY",
+      "tokenStoreSource": profile.tokenStoreJSON == nil ? "file" : "environment",
+      "hasRefreshToken": store?.refreshToken?.isEmpty == false,
+      "expiresAt": store?.expiresAt?.description ?? NSNull()
+    ].merging(profile.tokenSourceDetails) { current, _ in current })
+  }
+
+  private func authDiagnosticMessage(_ message: String, arguments: [String]) -> String {
+    let credential = (try? ParsedArguments(arguments).options["credential"]?.last) ?? role.identifier
+    guard let profile = try? resolvedProfile(credential) else { return message }
+    return profile.tokenSourceMessage(message)
+  }
+
+  private func resolvedProfile(_ credential: String, allowMissingClient: Bool = false) throws -> GatewayCredentialProfile {
+    if let credentialProfile {
+      guard credentialProfile.id == credential, credentialProfile.role == role else { throw GatewayError.scopeMismatch }
+      return credentialProfile
+    }
+    if let cancellation {
+      return try GatewaySDKCredentialProfileLoader.load(
+        role: role,
+        credentialID: credential,
+        environment: environment,
+        cancellation: cancellation
+      )
+    }
+    return try GatewayCredentialProfileLoader.load(role: role, credentialID: credential, environment: environment, allowMissingClient: allowMissingClient)
+  }
+
+  private func tokenStore(profile: GatewayCredentialProfile) throws -> GatewayTokenStore {
+    if let tokenStoreJSON = profile.tokenStoreJSON {
+      if let cancellation {
+        let data = try GatewaySDKCredentialProfileLoader.boundedInlineData(tokenStoreJSON, cancellation: cancellation)
+        let store = try credentialDecoder.decodeTokenStore(data)
+        try store.validates(role: role)
+        if cancellation.isCancelled { throw GatewayError.transportFailure("SDK execution was cancelled") }
+        return store
+      }
+      return try GatewayTokenStoreFile.read(json: tokenStoreJSON, role: role)
+    }
+    if let cancellation {
+      // The SDK path uses a bounded, cancellation-aware read. Legacy migration
+      // is a synchronous CLI lifecycle operation and must not run inside it.
+      let data = try GatewaySDKCredentialProfileLoader.boundedData(
+        at: profile.tokenStoreURL.path,
+        cancellation: cancellation
+      )
+      let store = try credentialDecoder.decodeTokenStore(data)
+      try store.validates(role: role)
+      if cancellation.isCancelled { throw GatewayError.transportFailure("SDK execution was cancelled") }
+      return store
+    }
+    try GatewayTokenStoreFile.migrateLegacyStoreIfNeeded(profile: profile)
+    return try GatewayTokenStoreFile.read(from: profile.tokenStoreURL, role: role)
+  }
+
+}
+
+private func gatewayEncode(_ object: [String: Any]) -> String {
+  let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{\"ok\":false}".utf8)
+  return String(data: data, encoding: .utf8) ?? "{\"ok\":false}"
+}
+
+private extension GatewayCommandRunner {
+  func providerResult(operation: String, response: GatewayHTTPResponse) throws -> GatewayCommandResult {
+    try checkCancellation(cancellation); guard (200...299).contains(response.statusCode) else {
+      return failure("PROVIDER_ERROR", try GatewayBoundedProviderJSON.message(response.data, cancellation: cancellation), exitCode: 5)
+    }
+    guard try GatewayBoundedProviderJSON.structureIsBounded(response.data, cancellation: cancellation) else {
+      return failure("RESPONSE_LIMIT_EXCEEDED", "Provider response exceeds the SDK JSON structure limit.", exitCode: 5)
+    }
+    let data: Any
+    if response.data.isEmpty {
+      data = [:]
+    } else if let object = response.jsonObject() { data = object
+    } else {
+      return failure("PROVIDER_RESPONSE_INVALID", "Provider returned a non-JSON response.", exitCode: 5)
+    }
+    try checkCancellation(cancellation)
+    return try GatewayBoundedProviderJSON.success(
+      ["operation": operation, "data": data, "requestId": response.requestID ?? NSNull()],
+      cancellation: cancellation
+    )
+  }
+}
+
+private func approvedUploadSessionURL(_ url: URL) -> Bool {
+  url.scheme == "https" && ["www.googleapis.com", "upload.googleapis.com"].contains(url.host?.lowercased())
+}
+
+private func isCancellationFailure(_ error: GatewayError) -> Bool {
+  guard case .transportFailure(let message) = error else { return false }
+  return message == "SDK execution was cancelled"
+}
+
+private struct ParsedArguments {
+  let command: String
+  let options: [String: [String]]
+
+  init(_ arguments: [String]) throws {
+    let commandWords = arguments.prefix { !$0.hasPrefix("-") }
+    guard !commandWords.isEmpty, commandWords.count <= 2 else { throw GatewayError.invalidArgument("Expected a command") }
+    command = commandWords.joined(separator: " ")
+    var values: [String: [String]] = [:]
+    var index = commandWords.count
+    while index < arguments.count {
+      let option = arguments[index]
+      guard option.hasPrefix("--") else { throw GatewayError.invalidArgument("Expected option, got \(option)") }
+      let optionText = String(option.dropFirst(2))
+      let keyValue = optionText.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+      let key = String(keyValue[0])
+      guard !key.isEmpty else { throw GatewayError.invalidArgument("Expected option name") }
+      if [
+        "dry-run", "overwrite", "page-all", "online", "acknowledge-broad-access",
+        "acknowledge-permanent-delete", "confirm-clear", "keep-forever", "publish"
+      ].contains(key) {
+        guard keyValue.count == 1 else { throw GatewayError.invalidArgument("--\(key) does not take a value") }
+        values[key, default: []].append("true")
+        index += 1
+      } else {
+        if keyValue.count == 2 {
+          values[key, default: []].append(String(keyValue[1]))
+          index += 1
+        } else {
+          guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else { throw GatewayError.invalidArgument("Missing value for \(option)") }
+          values[key, default: []].append(arguments[index + 1])
+          index += 2
+        }
+      }
+    }
+    options = values
+  }
+}
+
+private func gatewayProviderURL(for plan: GatewayRequestPlan, role: GatewayRole) throws -> URL {
+  let host: String
+  switch role.service {
+  case .docs: host = "https://docs.googleapis.com"
+  case .sheets: host = "https://sheets.googleapis.com"
+  case .drive: host = "https://www.googleapis.com"
+  }
+  guard var components = URLComponents(string: host + plan.path) else {
+    throw GatewayError.transportFailure("Unable to construct provider URL")
+  }
+  components.queryItems = plan.query.map { URLQueryItem(name: $0.0, value: $0.1) }
+  guard let url = components.url else { throw GatewayError.transportFailure("Unable to encode provider URL") }
+  return url
+}

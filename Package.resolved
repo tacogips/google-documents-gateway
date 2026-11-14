@@ -1,0 +1,23 @@
+{
+  "originHash" : "cd66a79b7db68f4cac77b8a34885068f14ed169eb1e866d9b2e2d032fbcdc266",
+  "pins" : [
+    {
+      "identity" : "gateway-sdk-kit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tacogips/gateway-sdk-kit.git",
+      "state" : {
+        "revision" : "4d4b56c686f6875defccb54f74e2276022eb524e",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "google-gateway-auth",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tacogips/google-gateway-auth.git",
+      "state" : {
+        "revision" : "48e0112fb5eb057cf012194cfffaa2581ba29d76"
+      }
+    }
+  ],
+  "version" : 3
+}
