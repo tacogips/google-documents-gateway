@@ -6,7 +6,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tacogips/gateway-sdk-kit.git",
       "state" : {
-        "revision" : "b133fcaab52265dcd508df7e2c3f11a073d20d83",
+        "revision" : "df2cd756dae9d624f8e5efbd4eb9f13ea438ecf4",
         "version" : "0.1.1"
       }
     },
@@ -15,7 +15,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tacogips/google-gateway-auth.git",
       "state" : {
-        "revision" : "48e0112fb5eb057cf012194cfffaa2581ba29d76"
+        "revision" : "40b310cd6f2abeb2ae8a770643408bd161795417"
       }
     }
   ],

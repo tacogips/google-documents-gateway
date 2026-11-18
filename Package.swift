@@ -18,7 +18,7 @@ let package = Package(
     .executable(name: "google-drive-gateway-writer", targets: ["GoogleDriveGatewayWriter"])
   ],
   dependencies: [
-    .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "48e0112fb5eb057cf012194cfffaa2581ba29d76"),
+    .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "40b310cd6f2abeb2ae8a770643408bd161795417"),
     .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", .upToNextMinor(from: "0.1.0"))
   ],
   targets: [
